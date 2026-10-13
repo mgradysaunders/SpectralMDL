@@ -288,6 +288,41 @@ TEST_CASE("Compiler: a function declared ahead of its definition") {
   }
 }
 
+TEST_CASE("Compiler: what a cast between structs refuses") {
+  // A struct casts to another of as many fields, each of which converts to
+  // the field in the same position, and only by a cast.
+  static const char *structs{"mdl 1.9;\n"
+                             "struct A { float x; int n; };\n"
+                             "struct B { float y; int m; };\n"
+                             "struct C { float y; };\n"
+                             "struct D { float y; texture_2d t; };\n"};
+  auto material{[](std::string_view intensity) {
+    return smdl::concat(
+        "export material m() = material(surface: material_surface(\n"
+        "  emission: material_emission(intensity: color(",
+        intensity, "))));\n");
+  }};
+  SUBCASE("A parameter does not take a struct that only casts to its type") {
+    CHECK_CONTAINS(compileError(smdl::concat(structs, "float f(B b) = b.y;\n",
+                                             material("f(A(1.0, 2))")))
+                       .message,
+                   "Argument type \"A\" is not implicitly convertible to type "
+                   "\"B\" of parameter \"b\"");
+  }
+  SUBCASE("A struct of another number of fields does not cast") {
+    CHECK_CONTAINS(
+        compileError(smdl::concat(structs, material("cast<C>(A(1.0, 2)).y")))
+            .message,
+        "Cannot construct \"C\" from \"(A)\"");
+  }
+  SUBCASE("A struct with a field that does not convert does not cast") {
+    CHECK_CONTAINS(
+        compileError(smdl::concat(structs, material("cast<D>(A(1.0, 2)).y")))
+            .message,
+        "Cannot construct \"D\" from \"(A)\"");
+  }
+}
+
 TEST_CASE("Compiler: what an open function refuses") {
   SUBCASE("An open function has a parameter to dispatch on") {
     CHECK_CONTAINS(compileError("#smdl\n@(open) int f();\n").message,

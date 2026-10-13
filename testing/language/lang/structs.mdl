@@ -3,7 +3,8 @@
 /// A field default may read the fields declared before it, and it is
 /// evaluated per construction rather than stored, so `r2 = r * r` stays
 /// true when `r` is given. `finalize { ... }` runs after the constructor to
-/// derive whatever the fields imply, and does not run again for a copy.
+/// derive whatever the fields imply, and does not run again for a copy. A
+/// cast converts a struct to another of the same shape, field by field.
 ///
 /// Three things change the layout. A `static` field is shared by every
 /// instance and takes no storage. A field of type `void()` takes no storage
@@ -91,6 +92,36 @@ unit_test "A declared constructor beats the field-wise one" {
   auto foo1 = CtorPrecedence(value: 7, fieldWise: true);
   #assert(foo1.fieldWise);
   #assert(foo1.value == 7);
+}
+
+// A cast converts a struct to another of as many fields, each of which
+// converts to the field in the same position, whatever the fields are
+// named, the way a nested struct, an array, or an enum converts. The result
+// is constructed field-wise from the converted fields, so `finalize` runs.
+// The conversion is explicit, so a parameter of one type does not take the
+// other.
+struct Interval {
+  float lo;
+  float hi;
+};
+
+struct Ordered {
+  float a;
+  float b;
+
+  finalize {
+    b = #max(a, b);
+  }
+};
+
+unit_test "A struct casts to another whose fields convert in order" {
+  auto ordered = cast<Ordered>(Interval(2.0, 1.0));
+  #assert(ordered.a == 2.0);
+  #assert(ordered.b == 2.0); // Raised to 'a' by finalize
+  auto all =
+    cast<Ordered[2]>(Interval[2](Interval(0.0, 1.0), Interval(3.0, 1.0)));
+  #assert(all[0].b == 1.0);
+  #assert(all[1].b == 3.0);
 }
 
 struct StaticFields {

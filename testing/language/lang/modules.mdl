@@ -97,7 +97,7 @@ unit_test "export gates a namespace member across modules, not within one" {
 }
 
 unit_test "A conformant module resolves like any other" {
-  // `packages/conformant.mdl` declares `mdl 1.8;` and has no `#smdl`
+  // `packages/conformant.mdl` declares `mdl 1.9;` and has no `#smdl`
   // marker, so none of the dialect is available inside it. Nothing about
   // importing it differs.
   #assert(packages::conformant::conformantAnswer == 42);
@@ -140,4 +140,34 @@ unit_test "A conformant overload set resolves as the specification has it" {
   #assert(packages::conformant::conformantSumOfOne(1.0) == 3.0);
   #assert(packages::conformant::conformantSum(1.0) == 3.0);
   #assert(packages::conformant::conformantSum(1.0, y: 5.0) == 6.0);
+}
+
+unit_test "A conformant struct casts to another whose fields cast in order" {
+  const auto colors = packages::conformant::conformantRecolored(
+    packages::conformant::ConformantColorPair(color(0.1), color(0.2)));
+  #assert(#all(colors.c1 == color(0.1)) && #all(colors.c2 == color(0.2)));
+  const auto faced = packages::conformant::conformantFaced(
+    packages::conformant::ConformantSidedPair(
+      packages::conformant::ConformantColorPair(color(0.3), color(0.4)),
+      packages::conformant::conformant_back));
+  #assert(#all(faced.colors.c2 == color(0.4)));
+  #assert(faced.face == packages::conformant::conformant_inside);
+  const auto recolored = packages::conformant::conformantRecoloredAll(
+    packages::conformant::ConformantColorPair[2](
+      packages::conformant::ConformantColorPair(color(0.5), color(0.6)),
+      packages::conformant::ConformantColorPair(color(0.7), color(0.8))));
+  #assert(#all(recolored[1].c2 == color(0.8)));
+}
+
+unit_test "A conformant size-deferred parameter reuses the size of another" {
+  // The overload that binds both sizes to `n` takes arrays of one size,
+  // and the other takes the rest.
+  const float[2] a(1.0, 2.0);
+  const float[2] b(3.0, 4.0);
+  const float[3] c(3.0, 4.0, 5.0);
+  #assert(packages::conformant::conformantInnerProduct(a, b) == 11.0);
+  #assert(packages::conformant::conformantInnerProduct(a, c) == -1.0);
+  const auto doubled = packages::conformant::conformantDoubled(int[3](1, 2, 3));
+  #assert(#typeOf(doubled) == int[3]);
+  #assert(doubled[2] == 6);
 }

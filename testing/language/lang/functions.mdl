@@ -16,7 +16,7 @@
 /// is not there without paying for it. An inferred size, `float[<N>]`, binds
 /// `N` from the argument and makes `N` available in the body and in the
 /// later defaults, which instantiates the function once per size the way a
-/// template would.
+/// template would. A later parameter type names the same size `float[N]`.
 ///
 /// Finally, a body is resolved where it is written, not where it is called:
 /// a macro expansion, a function instance, and a default argument all see
@@ -234,6 +234,44 @@ unit_test "An inferred size binds per call and reaches the defaults" {
   #assert(
     dotShared(float[2](1.0, 2.0), float[2](3.0, 4.0)) == 11.0,
     "shared size name must accept equal sizes");
+}
+
+// A later parameter names a size an earlier one declared without the angle
+// brackets, as the specification spells it, and so does the return type:
+// `float[N]` after `float[<N>]` is `float[<N>]` again. Between two inferred
+// sizes, the overload whose elements are the more specific wins, as `float`
+// does over `auto`, and so does the overload that binds two sizes to one
+// name, since it accepts less than the one that binds them apart.
+@(pure macro)
+float[N] scaled(const float[<N>] w, const float s) {
+  float[N] result(w);
+  for (int i = 0; i < N; i++)
+    result[i] *= s;
+  return result;
+}
+
+@(pure macro)
+int pickElement(const float[<N>] w [[anno::unused()]]) = 1;
+@(pure macro)
+int pickElement(const auto[<N>] w [[anno::unused()]]) = 2;
+
+@(pure macro)
+int pickShared(
+  const float[<N>] a [[anno::unused()]],
+  const float[<M>] b [[anno::unused()]],
+) = 1;
+@(pure macro)
+int pickShared(
+  const float[<N>] a [[anno::unused()]], const float[N] b [[anno::unused()]]) =
+  2;
+
+unit_test "A size name reused without brackets names the same size" {
+  #assert(#typeOf(scaled(float[3](1.0, 2.0, 3.0), 2.0)) == float[3]);
+  #assert(scaled(float[3](1.0, 2.0, 3.0), 2.0)[2] == 6.0);
+  #assert(pickElement(float[2](0.0, 0.0)) == 1);
+  #assert(pickElement(int[2](0, 0)) == 2);
+  #assert(pickShared(float[2](0.0, 0.0), float[2](0.0, 0.0)) == 2);
+  #assert(pickShared(float[2](0.0, 0.0), float[3](0.0, 0.0, 0.0)) == 1);
 }
 
 // A one-element array is also the shape of a constructor call with one

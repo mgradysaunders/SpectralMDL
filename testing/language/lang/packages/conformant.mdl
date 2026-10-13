@@ -91,3 +91,62 @@ export float conformantSumOfOne(float x) = conformantSum(x);
 export float conformantSum(float x, float y) {
   return x + y;
 }
+
+// A cast converts a struct to another of as many fields, each of which
+// casts to the field in the same position, whatever the fields are named:
+// the specification's example, and the same with the pair nested beside an
+// enum, which casts to another enum of the same values.
+export struct ConformantColorPair {
+  color dark;
+  color bright;
+};
+
+export struct ConformantTwoColors {
+  color c1;
+  color c2;
+};
+
+export enum ConformantSide { conformant_front, conformant_back };
+
+export enum ConformantFace { conformant_outside, conformant_inside };
+
+export struct ConformantSidedPair {
+  ConformantColorPair colors;
+  ConformantSide side;
+};
+
+export struct ConformantFacedPair {
+  ConformantTwoColors colors;
+  ConformantFace face;
+};
+
+export ConformantTwoColors conformantRecolored(ConformantColorPair pair) =
+  cast<ConformantTwoColors>(pair);
+
+export ConformantFacedPair conformantFaced(ConformantSidedPair pair) =
+  cast<ConformantFacedPair>(pair);
+
+export ConformantTwoColors[2] conformantRecoloredAll(
+  ConformantColorPair[2] pairs) = cast<ConformantTwoColors[2]>(pairs);
+
+// A size-deferred parameter may name the size an earlier one declares,
+// without the angle brackets, so that the two arrays are of one size, and
+// so may the return type. Of the specification's two overloads, the one
+// that binds both sizes to one name accepts less, so it is the more
+// specific where both arrays are of one size.
+export float conformantInnerProduct(
+  float[<n>] a [[anno::unused()]], float[<m>] b [[anno::unused()]]) = -1.0;
+
+export float conformantInnerProduct(float[<n>] a, float[n] b) {
+  float result = 0.0;
+  for (int i = 0; i < n; ++i)
+    result += a[i] * b[i];
+  return result;
+}
+
+export int[n] conformantDoubled(int[<n>] a) {
+  int[n] result;
+  for (int i = 0; i < n; ++i)
+    result[i] = 2 * a[i];
+  return result;
+}

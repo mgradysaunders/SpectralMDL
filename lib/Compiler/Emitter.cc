@@ -880,6 +880,14 @@ Value Emitter::emit(ast::AccessIndex &expr) {
                  sizeName{llvm::dyn_cast<ast::SizeName>(index.expr.get())}) {
         type = context.getInferredSizeArrayType(
             type, std::string(sizeName->name.srcName));
+      } else if (ast::Identifier *identifier{
+                     llvm::dyn_cast<ast::Identifier>(index.expr.get())};
+                 identifier && identifier->isSimpleName() &&
+                 llvm::is_contained(sizeNames, identifier->elementViews[0])) {
+        // A size name an earlier parameter declared, which names the same
+        // size here. See 'sizeNames'.
+        type = context.getInferredSizeArrayType(
+            type, std::string(identifier->elementViews[0]));
       } else {
         Value size{invoke(context.getIntType(), emit(index.expr), expr.srcLoc)};
         std::optional<int64_t> sizeNow{size.getComptimeSignedInt()};

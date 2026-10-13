@@ -1151,6 +1151,52 @@ void rejectDuplicateParameterNames(const ParameterList &params,
   return isArithmeticPair(typeA, typeB) && !isWidening(context, typeA, typeB);
 }
 
+// The sizes of the arrays 'type' nests, outermost first: the size name of
+// an inferred-size array, as 'N' of 'float[<N>]', the empty name for one
+// with none, and the size of an array of fixed size, spelled '#4', which
+// no size name can be.
+[[nodiscard]] llvm::SmallVector<std::string, 2> getArraySizeKeys(Type *type) {
+  llvm::SmallVector<std::string, 2> keys{};
+  while (true) {
+    if (auto inferredSizeArrayType{
+            llvm::dyn_cast<InferredSizeArrayType>(type)}) {
+      keys.push_back(inferredSizeArrayType->sizeName);
+      type = inferredSizeArrayType->elemType;
+    } else if (auto arrayType{llvm::dyn_cast<ArrayType>(type)}) {
+      keys.push_back(concat("#", arrayType->size));
+      type = arrayType->elemType;
+    } else {
+      return keys;
+    }
+  }
+}
+
+// Does 'paramsB' have one size wherever 'paramsA' binds two sizes to one
+// name? It does where it binds them to one name too, or to one fixed size.
+// So 'inner_product(float[<n>] a, float[n] b)' accepts no more than
+// 'inner_product(float[<n>] a, float[<m>] b)', but the second accepts what
+// the first does not.
+[[nodiscard]] bool
+hasOneSizeWhereBound(llvm::ArrayRef<const Parameter *> paramsA,
+                     llvm::ArrayRef<const Parameter *> paramsB) {
+  llvm::SmallVector<std::pair<std::string, std::string>> sizes{};
+  for (size_t i = 0; i < paramsA.size(); i++) {
+    if (!paramsA[i] || !paramsB[i]) continue;
+    const auto keysA{getArraySizeKeys(paramsA[i]->type)};
+    const auto keysB{getArraySizeKeys(paramsB[i]->type)};
+    for (size_t k = 0; k < keysA.size(); k++)
+      sizes.push_back({keysA[k], k < keysB.size() ? keysB[k] : std::string()});
+  }
+  for (size_t s = 0; s < sizes.size(); s++) {
+    const auto &[keyA, keyB]{sizes[s]};
+    if (keyA.empty() || keyA[0] == '#') continue;
+    for (size_t t = s + 1; t < sizes.size(); t++)
+      if (sizes[t].first == keyA && (keyB.empty() || sizes[t].second != keyB))
+        return false;
+  }
+  return true;
+}
+
 // Spell a type as code in the module 'from' would name it, qualifying a
 // struct declared in another module by that module's name.
 [[nodiscard]] std::string spellType(Type *type, const Module *from) {
@@ -1295,14 +1341,15 @@ void FunctionType::initialize(Emitter &emitter) {
   // Declare the function name.
   emitter.declare(decl.name, &decl, context.getComptimeMetaType(this));
   emitter.captureResolutionAnchor(params);
-  // Initialize return type and parameters.
+  // Initialize parameters and return type, in that order, since the return
+  // type may name a size a parameter declares, as in `int[n] id(int[<n>] a)`.
+  SMDL_PRESERVE(emitter.sizeNames);
+  emitter.sizeNames.clear();
+  for (auto &param : decl.params)
+    params.push_back(emitter.emitParameter(param));
   returnType =
       emitter.emit(decl.returnType).getComptimeMetaType(context, decl.srcLoc);
-  for (auto &param : decl.params)
-    params.push_back(
-        Parameter{emitter.emit(param.type)
-                      .getComptimeMetaType(context, param.name.srcLoc),
-                  param.name, /*astParam=*/&param});
+  emitter.sizeNames.clear();
   rejectDuplicateParameterNames(params,
                                 concat("function ", SpellQuoted(declName)));
   // Initialize whether parameter list is variadic.
@@ -1470,11 +1517,11 @@ void FunctionType::initializeLambda(Emitter &emitter) {
   // for lambdas (`decl.returnType` is null); the return type is always
   // implicitly `auto`, inferred at each expansion.
   returnType = context.getAutoType();
+  SMDL_PRESERVE(emitter.sizeNames);
+  emitter.sizeNames.clear();
   for (auto &param : decl.params)
-    params.push_back(
-        Parameter{emitter.emit(param.type)
-                      .getComptimeMetaType(context, param.name.srcLoc),
-                  param.name, /*astParam=*/&param});
+    params.push_back(emitter.emitParameter(param));
+  emitter.sizeNames.clear();
   rejectDuplicateParameterNames(params, "lambda");
   // The parser already rejects `...` in lambdas; belt and braces because
   // macros must not be variadic.
@@ -1744,6 +1791,10 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
   // allows, the specification's order decides first: a parameter accepts
   // what another does if that one widens to it. So 'foo(double)' is less
   // specific than 'foo(float)', and 'foo(1)' calls the latter.
+  //
+  // Two inferred-size arrays each accept an array of any size, so of the
+  // two, the one that accepts more is the one whose elements do, and then
+  // only if it binds no two sizes to one name that the other does not.
   auto isLessSpecific{[&](llvm::ArrayRef<const Parameter *> paramsA,
                           llvm::ArrayRef<const Parameter *> paramsB,
                           bool isArithmeticOrdered) {
@@ -1754,6 +1805,13 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
       Type *argType{args[i].value.type};
       Type *typeA{paramsA[i]->type};
       Type *typeB{paramsB[i]->type};
+      while (llvm::isa<InferredSizeArrayType>(typeA) &&
+             llvm::isa<InferredSizeArrayType>(typeB)) {
+        typeA = llvm::cast<InferredSizeArrayType>(typeA)->elemType;
+        typeB = llvm::cast<InferredSizeArrayType>(typeB)->elemType;
+        if (auto arrayType{llvm::dyn_cast<ArrayType>(argType)})
+          argType = arrayType->elemType;
+      }
       if (isArithmeticOrdered && isArithmeticPair(typeA, typeB) &&
           !isNarrowing(emitter.context, argType, typeA) &&
           !isNarrowing(emitter.context, argType, typeB)) {
@@ -1762,7 +1820,7 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
         return false;
       }
     }
-    return true;
+    return hasOneSizeWhereBound(paramsA, paramsB);
   }};
   auto beatsBySpecificity{[&](bool isArithmeticOrdered) {
     return [&, isArithmeticOrdered](const Overload &overloadA,
@@ -3380,6 +3438,24 @@ Value StructType::invoke(Emitter &emitter, const ArgumentList &args,
       });
     }
     return result;
+  }
+  // A struct of another type with as many fields, each of which converts to
+  // the field at the same position here, converts field by field (see
+  // 'Context::getConversionRule()'). The fields are passed by name, which
+  // constructs field-wise unless a constructor takes the same names (see
+  // above).
+  if (args.isOnePositional() && llvm::isa<StructType>(args[0].value.type) &&
+      emitter.context.isExplicitlyConvertible(args[0].value.type, this)) {
+    auto structType{llvm::cast<StructType>(args[0].value.type)};
+    ArgumentList fieldArgs{};
+    for (size_t i{}; i < params.size(); i++)
+      fieldArgs.push_back(Argument(
+          params[i].name,
+          emitter.invoke(params[i].type,
+                         emitter.accessField(
+                             args[0].value, structType->params[i].name, srcLoc),
+                         srcLoc)));
+    return emitter.invoke(this, fieldArgs, srcLoc);
   }
   addCandidateNote("field-wise", params, decl.name.srcLoc,
                    dropSourceLocation(std::move(whyNot), srcLoc));

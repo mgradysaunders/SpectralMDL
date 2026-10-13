@@ -474,6 +474,29 @@ ConversionRule Context::getConversionRule(Type *typeA, Type *typeB) {
       return CONVERSION_RULE_EXPLICIT;
     }
   }
+  // If the source and destination types are structs with as many fields,
+  // and each field of the source converts to the field at the same position
+  // in the destination, conversion is explicit. This is the cast of MDL
+  // between structs, to which the names of the fields do not matter, only
+  // their order. NOTE: Not to an abstract struct, where a result inferred
+  // as the source type would pass for the destination type.
+  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  // struct color_pair { color dark; color bright; };
+  // struct two_colors { color c1; color c2; };
+  // auto col2 = cast<two_colors>(color_pair(color(0.1), color(0.2)));
+  // ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  if (StructType * structTypeA{llvm::dyn_cast<StructType>(typeA)}) {
+    if (StructType *structTypeB{llvm::dyn_cast<StructType>(typeB)};
+        structTypeB && !structTypeB->isAbstract() &&
+        structTypeA->params.size() == structTypeB->params.size()) {
+      for (size_t i{}; i < structTypeA->params.size(); i++)
+        if (getConversionRule(structTypeA->params[i].type,
+                              structTypeB->params[i].type) ==
+            CONVERSION_RULE_NOT_ALLOWED)
+          return CONVERSION_RULE_NOT_ALLOWED;
+      return CONVERSION_RULE_EXPLICIT;
+    }
+  }
   return CONVERSION_RULE_NOT_ALLOWED;
 }
 

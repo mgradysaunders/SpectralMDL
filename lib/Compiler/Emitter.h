@@ -501,7 +501,8 @@ public:
   void handleScope(llvm::BasicBlock *blockStart, llvm::BasicBlock *blockEnd,
                    Func &&func) {
     SMDL_PRESERVE(scope, anchors, state, labelReturn, labelBreak, labelContinue,
-                  isInDefer, currentModule);
+                  isInDefer, currentModule, sizeNames);
+    sizeNames.clear();
     const size_t depth0{unwindStack.size()};
     scope = pushScope(/*isTransparent=*/false);
     if (blockStart) {
@@ -1164,13 +1165,24 @@ public:
     recordReturn(value, srcLoc);
   }
 
+  /// Emit a parameter, and add the size names its type declares, as `N` in
+  /// `float[<N>] a`, to `sizeNames`, for the parameters after it.
   [[nodiscard]] Parameter emitParameter(ast::Parameter &astParam) {
-    return Parameter{
-        emit(astParam.type).getComptimeMetaType(context, astParam.name.srcLoc),
-        astParam.name, &astParam};
+    Type *type{
+        emit(astParam.type).getComptimeMetaType(context, astParam.name.srcLoc)};
+    Type *elemType{type};
+    while (auto inferredSizeArrayType{
+        llvm::dyn_cast<InferredSizeArrayType>(elemType)}) {
+      if (!inferredSizeArrayType->sizeName.empty())
+        sizeNames.push_back(inferredSizeArrayType->sizeName);
+      elemType = inferredSizeArrayType->elemType;
+    }
+    return Parameter{type, astParam.name, &astParam};
   }
 
   [[nodiscard]] ParameterList emitParameterList(ast::ParameterList &astParams) {
+    SMDL_PRESERVE(sizeNames);
+    sizeNames.clear();
     ParameterList params{};
     for (auto &astParam : astParams)
       params.emplace_back(emitParameter(astParam));
@@ -1401,6 +1413,13 @@ public:
 
   /// The label to branch to after `continue` statement.
   Label labelContinue{};
+
+  /// The size names declared by the parameters emitted so far in the
+  /// parameter list being emitted. A later parameter type in the list, or
+  /// the return type, names the same size by one, so that `b` has the type
+  /// of `a` in `inner_product(float[<n>] a, float[n] b)`. Empty outside a
+  /// parameter list, where a size name is the `int` an argument bound it to.
+  llvm::SmallVector<std::string_view> sizeNames{};
 
   /// Is currently in defer statement? This allows for more specific error
   /// messages if the user tries to defer a `break`, `continue`, or `return`
