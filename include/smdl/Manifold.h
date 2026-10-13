@@ -148,7 +148,7 @@ public:
 /// smooth piece (a mesh's faces tile one smooth surface; a shape's
 /// pieces, like a cylinder's side and caps, do not), and whatever
 /// pass-through policy the renderer has for null interfaces or cutouts
-/// is its own. Second, the shading field `evaluateGeometry()` reports must be
+/// is its own. Second, the shading field `eval()` reports must be
 /// the field the material's lobes actually scatter about, differentiated
 /// consistently with the position partials; a renderer whose material
 /// remaps the shading normal reads the remapped field back through
@@ -161,9 +161,8 @@ public:
 
   /// The differential shading geometry at `vertex`. False when the
   /// vertex cannot be evaluated, which fails the walk iterate cleanly.
-  [[nodiscard]] virtual bool
-  evaluateGeometry(const ManifoldVertex &vertex,
-                   ManifoldGeometry &geometry) const = 0;
+  [[nodiscard]] virtual bool eval(const ManifoldVertex &vertex,
+                                  ManifoldGeometry &geometry) const = 0;
 
   /// Re-anchor a stepped position onto the real surface: cast from
   /// `origin` toward `target` and accept the first hit on the same

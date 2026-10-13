@@ -33,9 +33,8 @@ public:
   PlaneSurfaces(float scale, const float3 &normal)
       : scale_{scale}, normal_{normal} {}
 
-  [[nodiscard]] bool
-  evaluateGeometry(const smdl::ManifoldVertex &,
-                   smdl::ManifoldGeometry &geometry) const override {
+  [[nodiscard]] bool eval(const smdl::ManifoldVertex &,
+                          smdl::ManifoldGeometry &geometry) const override {
     geometry = {};
     geometry.normal = normal_;
     geometry.dPdu = float3(scale_, 0.0f, 0.0f);
@@ -67,9 +66,8 @@ private:
 
 class SphereSurfaces final : public smdl::ManifoldSurfaces {
 public:
-  [[nodiscard]] bool
-  evaluateGeometry(const smdl::ManifoldVertex &vertex,
-                   smdl::ManifoldGeometry &geometry) const override {
+  [[nodiscard]] bool eval(const smdl::ManifoldVertex &vertex,
+                          smdl::ManifoldGeometry &geometry) const override {
     geometry = {};
     geometry.normal = normalize(float3(vertex.point));
     // Any local frame spanning the tangent plane serves as the
@@ -555,9 +553,8 @@ public:
     return static_cast<int>(faces_.size());
   }
 
-  [[nodiscard]] bool
-  evaluateGeometry(const smdl::ManifoldVertex &vertex,
-                   smdl::ManifoldGeometry &geometry) const override {
+  [[nodiscard]] bool eval(const smdl::ManifoldVertex &vertex,
+                          smdl::ManifoldGeometry &geometry) const override {
     const Face &face{faces_[vertex.surface]};
     geometry = {};
     geometry.normal = normalize(float3(vertex.point - face.center));
@@ -752,9 +749,8 @@ public:
 
   explicit BallSurfaces(std::vector<Ball> balls) : balls_{std::move(balls)} {}
 
-  [[nodiscard]] bool
-  evaluateGeometry(const smdl::ManifoldVertex &vertex,
-                   smdl::ManifoldGeometry &geometry) const override {
+  [[nodiscard]] bool eval(const smdl::ManifoldVertex &vertex,
+                          smdl::ManifoldGeometry &geometry) const override {
     const double radius{balls_[vertex.surface].radius};
     geometry = {};
     geometry.normal = normalize(float3(vertex.point));
@@ -1074,9 +1070,8 @@ namespace {
 // its +x side, and its top, surface 1, the plane z = 1 with air above.
 class PoolSurfaces final : public smdl::ManifoldSurfaces {
 public:
-  [[nodiscard]] bool
-  evaluateGeometry(const smdl::ManifoldVertex &vertex,
-                   smdl::ManifoldGeometry &geometry) const override {
+  [[nodiscard]] bool eval(const smdl::ManifoldVertex &vertex,
+                          smdl::ManifoldGeometry &geometry) const override {
     const bool isWall{vertex.surface == 0};
     geometry = {};
     geometry.normal = isWall ? float3(1.0f, 0.0f, 0.0f) : float3(0, 0, 1.0f);
@@ -1367,10 +1362,9 @@ public:
 
   explicit RecordingSurfaces(const float3 &normal) : planes_{1.0f, normal} {}
 
-  [[nodiscard]] bool
-  evaluateGeometry(const smdl::ManifoldVertex &vertex,
-                   smdl::ManifoldGeometry &geometry) const override {
-    return planes_.evaluateGeometry(vertex, geometry);
+  [[nodiscard]] bool eval(const smdl::ManifoldVertex &vertex,
+                          smdl::ManifoldGeometry &geometry) const override {
+    return planes_.eval(vertex, geometry);
   }
 
   [[nodiscard]] bool project(const smdl::ManifoldVertex &pin,
@@ -1428,8 +1422,8 @@ namespace {
 // A surface with no geometry anywhere, which refuses every query.
 class VoidSurfaces final : public smdl::ManifoldSurfaces {
 public:
-  [[nodiscard]] bool evaluateGeometry(const smdl::ManifoldVertex &,
-                                      smdl::ManifoldGeometry &) const override {
+  [[nodiscard]] bool eval(const smdl::ManifoldVertex &,
+                          smdl::ManifoldGeometry &) const override {
     return false;
   }
 

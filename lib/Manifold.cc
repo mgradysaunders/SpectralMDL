@@ -8,7 +8,7 @@ namespace smdl {
 ManifoldSurfaces::~ManifoldSurfaces() = default;
 
 float3 ManifoldSurfaces::tangentOf(const ManifoldVertex &vertex) const {
-  if (ManifoldGeometry geometry; evaluateGeometry(vertex, geometry)) {
+  if (ManifoldGeometry geometry; eval(vertex, geometry)) {
     if (float3 tangent{geometry.dPdu -
                        dot(geometry.normal, geometry.dPdu) * geometry.normal};
         tryNormalize(tangent)) { // TODO 1e-6 tolerance?
@@ -25,7 +25,7 @@ bool ManifoldSurfaces::tangentSpaceOf(const ManifoldVertex &vertex,
                                       float3 &normal,           //
                                       float3 &tangentU,         //
                                       float3 &tangentV) const {
-  if (ManifoldGeometry geometry; evaluateGeometry(vertex, geometry)) {
+  if (ManifoldGeometry geometry; eval(vertex, geometry)) {
     normal = geometry.normal;
     if (float3 tangent{tangentAim - dot(normal, tangentAim) * normal};
         tryNormalize(tangent)) { // TODO 1e-6 tolerance?
@@ -257,7 +257,7 @@ double3 unitDirDeriv(const double3 &w, double invD, const double3 &dp) {
   double3 origin{receiver};
   for (int i = 0; i + 1 < problem.size(); i++) {
     ManifoldGeometry &geometry{chainState[i].geometry};
-    if (!surfaces.evaluateGeometry(traced[i], geometry)) return false;
+    if (!surfaces.eval(traced[i], geometry)) return false;
     double3 arriving{traced[i].point - origin};
     if (!tryNormalize(arriving)) return false;
     double3 t1{}, t2{}, leaving{};
@@ -288,8 +288,7 @@ bool evaluateChain(const ManifoldSurfaces &surfaces, const double3 &receiver,
   const int count{problem.size()};
   chainState.count = count;
   for (int i = isTraced ? count - 1 : 0; i < count; i++)
-    if (!surfaces.evaluateGeometry(vertices[i], chainState[i].geometry))
-      return false;
+    if (!surfaces.eval(vertices[i], chainState[i].geometry)) return false;
   // Segment directions, half vectors, frames, and constraints. The last
   // vertex's next segment is the distant light direction (whose zero
   // distance drops the position-derivative term below) or the segment
