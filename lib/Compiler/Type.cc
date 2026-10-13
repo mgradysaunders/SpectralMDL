@@ -239,6 +239,63 @@ Value accessViaLValue(Emitter &emitter, Value value, Access &&access) {
       std::invoke(std::forward<Access>(access), emitter.spillToMemory(value)));
 }
 
+// What an index out of bounds reads, which MDL 1.8 has be the element type
+// default constructed. That is zero for every type but a struct, whose
+// fields may have initializers, so a struct declared in a conformant
+// module, or an array of them, is default constructed. A struct of the
+// dialect reads zero all the same, since a field there may have no default.
+[[nodiscard]] Value getOutOfBoundsValue(Emitter &emitter, Type *type,
+                                        const SourceLocation &srcLoc) {
+  Type *innerType{type};
+  while (auto arrayType{llvm::dyn_cast<ArrayType>(innerType)})
+    innerType = arrayType->elemType;
+  auto structType{llvm::dyn_cast<StructType>(innerType)};
+  const Module *module{
+      structType ? structType->getInstanceOf().decl.srcLoc.module : nullptr};
+  if (!module || module->isSMDLSyntax()) return Value::zero(type);
+  Value value{emitter.invoke(type, ArgumentList(), srcLoc)};
+  return value.type == type ? value : emitter.invoke(type, value, srcLoc);
+}
+
+// The element at the index 'i' of 'lv', an aggregate in memory of 'count'
+// elements of 'elemType'.
+//
+// An index out of bounds has no element, so where it is checked, it points
+// instead to a slot holding what it reads (see 'getOutOfBoundsValue()'),
+// where a write is lost. The slot is filled only when the index is out of
+// bounds, which is why this is a branch rather than a select. The check is
+// the specification's, so only an index written in a conformant module
+// makes it. The dialect indexes as C does, which keeps the table lookups in
+// the builtin modules free of it, and a compile-time index was checked
+// where it compiled.
+[[nodiscard]] Value accessIndexChecked(Emitter &emitter, Value lv,
+                                       llvm::Type *llvmAggregateType,
+                                       Type *elemType, uint32_t count, Value i,
+                                       const SourceLocation &srcLoc) {
+  auto &builder{emitter.builder};
+  llvm::Value *elemPtr{builder.CreateGEP(llvmAggregateType, lv,
+                                         {builder.getInt32(0), i.llvmValue})};
+  if (i.isComptimeInt() || !srcLoc.module || srcLoc.module->isSMDLSyntax())
+    return LValue(elemType, elemPtr);
+  llvm::BasicBlock *blockInBounds{builder.GetInsertBlock()};
+  auto [blockOutOfBounds, blockAfter] =
+      emitter.createBlocks<2>("index", {".out_of_bounds", ".after"});
+  builder.CreateCondBr(
+      builder.CreateICmpULT(
+          i.llvmValue, llvm::ConstantInt::get(i.llvmValue->getType(), count)),
+      blockAfter, blockOutOfBounds);
+  builder.SetInsertPoint(blockOutOfBounds);
+  Value slot{emitter.createAlloca(elemType, "index.out_of_bounds")};
+  emitter.createStore(getOutOfBoundsValue(emitter, elemType, srcLoc), slot);
+  blockOutOfBounds = builder.GetInsertBlock();
+  builder.CreateBr(blockAfter);
+  builder.SetInsertPoint(blockAfter);
+  llvm::PHINode *elemOrSlot{builder.CreatePHI(elemPtr->getType(), 2)};
+  elemOrSlot->addIncoming(elemPtr, blockInBounds);
+  elemOrSlot->addIncoming(slot, blockOutOfBounds);
+  return LValue(elemType, elemOrSlot);
+}
+
 // If `value` is a pointer to `pointeeType`, construct `resultType` by
 // loading through the pointer. Assume the pointer is only as aligned as
 // the pointee type itself!
@@ -557,18 +614,17 @@ Value ArithmeticType::accessIndex(Emitter &emitter, Value value, Value i,
       });
     }
   } else {
+    i = emitter.rvalue(i);
     if (extent.isVector()) {
       ArithmeticType *scalarType{getScalarType(emitter.context)};
-      return LValue(
-          scalarType,
-          emitter.builder.CreateGEP(
-              llvm::ArrayType::get(scalarType->llvmType, extent.numRows), value,
-              {emitter.builder.getInt32(0), i.llvmValue}));
+      return accessIndexChecked(
+          emitter, value,
+          llvm::ArrayType::get(scalarType->llvmType, extent.numRows),
+          scalarType, extent.numRows, i, srcLoc);
     } else {
-      return LValue(
-          getColumnType(emitter.context),
-          emitter.builder.CreateGEP(
-              llvmType, value, {emitter.builder.getInt32(0), i.llvmValue}));
+      return accessIndexChecked(emitter, value, llvmType,
+                                getColumnType(emitter.context), extent.numCols,
+                                i, srcLoc);
     }
   }
 }
@@ -743,10 +799,8 @@ Value ArrayType::accessIndex(Emitter &emitter, Value value, Value i,
         return accessIndex(emitter, lv, i, srcLoc);
       });
     }
-    i = emitter.rvalue(i);
-    return LValue(elemType, emitter.builder.CreateGEP(
-                                llvmType, value,
-                                {emitter.builder.getInt32(0), i.llvmValue}));
+    return accessIndexChecked(emitter, value, llvmType, elemType, size,
+                              emitter.rvalue(i), srcLoc);
   }
 }
 
@@ -929,11 +983,10 @@ Value ColorType::accessIndex(Emitter &emitter, Value value, Value i,
     }
   } else {
     ArithmeticType *scalarType{getArithmeticScalarType(emitter.context)};
-    return LValue(
-        scalarType,
-        emitter.builder.CreateGEP(
-            llvm::ArrayType::get(scalarType->llvmType, wavelengthBaseMax),
-            value, {emitter.builder.getInt32(0), i.llvmValue}));
+    return accessIndexChecked(
+        emitter, value,
+        llvm::ArrayType::get(scalarType->llvmType, wavelengthBaseMax),
+        scalarType, wavelengthBaseMax, emitter.rvalue(i), srcLoc);
   }
 }
 
@@ -1075,6 +1128,29 @@ void rejectDuplicateParameterNames(const ParameterList &params,
   return func;
 }
 
+// Are 'typeA' and 'typeB' distinct arithmetic types of one extent? Such
+// types convert to each other implicitly, both ways.
+[[nodiscard]] bool isArithmeticPair(Type *typeA, Type *typeB) {
+  auto arithTypeA{llvm::dyn_cast<ArithmeticType>(typeA)};
+  auto arithTypeB{llvm::dyn_cast<ArithmeticType>(typeB)};
+  return arithTypeA && arithTypeB && arithTypeA != arithTypeB &&
+         arithTypeA->extent == arithTypeB->extent;
+}
+
+// Does 'typeA' widen to 'typeB', as 'bool' does to 'int', 'int' to 'float',
+// and 'float' to 'double'? These are the implicit conversions between
+// arithmetic types that the specification has. The other way, which the
+// dialect also converts implicitly, narrows.
+[[nodiscard]] bool isWidening(Context &context, Type *typeA, Type *typeB) {
+  return isArithmeticPair(typeA, typeB) &&
+         static_cast<ArithmeticType *>(typeA)->getCommonType(
+             context, static_cast<ArithmeticType *>(typeB)) == typeB;
+}
+
+[[nodiscard]] bool isNarrowing(Context &context, Type *typeA, Type *typeB) {
+  return isArithmeticPair(typeA, typeB) && !isWidening(context, typeA, typeB);
+}
+
 // Spell a type as code in the module 'from' would name it, qualifying a
 // struct declared in another module by that module's name.
 [[nodiscard]] std::string spellType(Type *type, const Module *from) {
@@ -1174,7 +1250,8 @@ void FunctionType::appendImplementations(
             abstractType.decl.srcLoc.module)
       for (auto func{lastOverload(static_cast<FunctionType *>(type))}; func;
            func = func->prevOverload)
-        if (!llvm::is_contained(funcs, func)) funcs.push_back(func);
+        if (!func->supersededBy && !llvm::is_contained(funcs, func))
+          funcs.push_back(func);
     break;
   }
 }
@@ -1233,6 +1310,54 @@ void FunctionType::initialize(Emitter &emitter) {
   if (decl.hasAttribute("macro") && decl.isVariadic()) {
     decl.srcLoc.throwError("Function ", SpellQuoted(declName),
                            " declared '@(macro)' must not be variadic");
+  }
+  // A function may be declared more than once, as MDL declares a function
+  // ahead of the definition that follows it, provided only the first
+  // declaration has default initializers. The declarations are one
+  // function: the one with the definition stands for the others, or the
+  // newest if none has one yet, with the parameters, and so the default
+  // initializers, of the first. Two definitions are left two overloads.
+  if (!isOpen()) {
+    for (FunctionType *other{prevOverload}; other;
+         other = other->prevOverload) {
+      if (other->supersededBy || other->isOpen() ||
+          other->params.isVariadic != params.isVariadic ||
+          other->params.getTypes() != params.getTypes())
+        continue;
+      if (decl.definition && other->decl.definition) break;
+      const std::string otherSrcLoc(other->decl.srcLoc);
+      if (other->returnType != returnType)
+        decl.srcLoc.throwError(
+            "Function ", SpellQuoted(declName), " is declared again returning ",
+            SpellQuoted(returnType->displayName), ", where its declaration at ",
+            otherSrcLoc, " returns ",
+            SpellQuoted(other->returnType->displayName));
+      for (size_t i{}; i < params.size(); i++) {
+        if (params[i].name != other->params[i].name)
+          params[i].getSourceLocation().throwError(
+              "Function ", SpellQuoted(declName),
+              " is declared again with parameter ", SpellQuoted(params[i].name),
+              ", which its declaration at ", otherSrcLoc, " names ",
+              SpellQuoted(other->params[i].name));
+        if (params[i].getASTInitializer())
+          params[i].getSourceLocation().throwError(
+              "Function ", SpellQuoted(declName),
+              " is declared again with a default initializer for ",
+              SpellQuoted(params[i].name),
+              ", which only its first declaration, at ", otherSrcLoc,
+              ", may have");
+      }
+      if (decl.definition || !other->decl.definition) {
+        for (size_t i{}; i < params.size(); i++)
+          params[i].astParam = other->params[i].astParam;
+        for (FunctionType *each{prevOverload}; each; each = each->prevOverload)
+          if (each == other || each->supersededBy == other)
+            each->supersededBy = this;
+      } else {
+        supersededBy = other;
+      }
+      break;
+    }
   }
   // An open function dispatches on its first parameter through ordinary
   // overload resolution, which foreign functions, visible functions, and
@@ -1316,8 +1441,9 @@ void FunctionType::initialize(Emitter &emitter) {
     compileNow();
   }
   // If this is a function with no parameters that returns `material`,
-  // it is a material definition!
-  if (returnType == context.materialType_ &&
+  // it is a material definition! A declaration with no definition is not,
+  // and the definition that supersedes it is the material.
+  if (returnType == context.materialType_ && decl.definition &&
       (params.empty() || params.hasAllDefaultInitializers())) {
     if (decl.hasAttribute("pure"))
       decl.srcLoc.throwError("Material ", SpellQuoted(declName),
@@ -1415,6 +1541,13 @@ Value FunctionType::invoke(Emitter &emitter, const ArgumentList &args,
     });
     return result;
   }
+  // A call compiled before the definition of a function declared ahead of
+  // it, such as from a material declared in between, reaches the
+  // declaration alone.
+  if (!func->decl.definition && !func->isForeign() && !func->isOpen())
+    srcLoc.throwError("Function ", SpellQuoted(func->declName), " declared at ",
+                      std::string(func->decl.srcLoc),
+                      " is not defined before this call");
   Emitter::ResolvedArguments resolvedArgs{emitter.resolveArguments(
       func->params, args, srcLoc, /*shouldSkipEmit=*/false,
       /*shouldPassAggregatesIndirectly=*/func->usesIndirectParams())};
@@ -1522,10 +1655,12 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
   // by name if it is named and otherwise the first positional one. That is
   // C++ argument-dependent lookup confined to one argument, which keeps an
   // implementation with its type and the lookup independent of what the
-  // caller imports.
+  // caller imports. A declaration that another of the same function stands
+  // for is no candidate of its own.
   llvm::SmallVector<FunctionType *> candidates{};
   FunctionType *openFunc{};
   for (auto func{lastOverload(this)}; func; func = func->prevOverload) {
+    if (func->supersededBy) continue;
     candidates.push_back(func);
     if (!openFunc && func->isOpen()) openFunc = func;
   }
@@ -1572,21 +1707,27 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
                       SpellQuoted(std::string(args)), overloadErrors);
   // Candidate A beats candidate B by conversion quality if A converts every
   // argument at least as well as B and at least one argument strictly better
-  // ('CONVERSION_RULE_PERFECT' beats 'CONVERSION_RULE_IMPLICIT'). This is
+  // ('CONVERSION_RULE_PERFECT' beats 'CONVERSION_RULE_IMPLICIT', and of the
+  // implicit conversions, one that widens beats one that narrows). This is
   // what makes an exact argument-type match win regardless of declaration
   // order.
+  auto getConversionRank{[&](Type *argType, Type *paramType) {
+    ConversionRule rule{emitter.context.getConversionRule(argType, paramType)};
+    return 2 * int(rule) -
+           int(isNarrowing(emitter.context, argType, paramType));
+  }};
   auto beatsByConversion{
       [&](const Overload &overloadA, const Overload &overloadB) {
         bool anyBetter{};
         for (size_t i = 0; i < args.size(); i++) {
           if (!overloadA.params[i] || !overloadB.params[i])
             continue; // Unresolved variadic arguments do not participate
-          ConversionRule ruleA{emitter.context.getConversionRule(
-              args[i].value.type, overloadA.params[i]->type)};
-          ConversionRule ruleB{emitter.context.getConversionRule(
-              args[i].value.type, overloadB.params[i]->type)};
-          if (ruleA < ruleB) return false;
-          if (ruleA > ruleB) anyBetter = true;
+          int rankA{
+              getConversionRank(args[i].value.type, overloadA.params[i]->type)};
+          int rankB{
+              getConversionRank(args[i].value.type, overloadB.params[i]->type)};
+          if (rankA < rankB) return false;
+          if (rankA > rankB) anyBetter = true;
         }
         return anyBetter;
       }};
@@ -1595,27 +1736,62 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
   // RHS parameter does. This is what makes a concrete declaration win over
   // an 'auto' template, and a struct win over its tag, whose conversion
   // ranks tie.
+  //
+  // Two arithmetic types of one extent accept each other, since they
+  // convert implicitly both ways, so they leave the decision to the other
+  // parameters. That is the last word, though. Where the argument reaches
+  // both without narrowing, as it does in every call the specification
+  // allows, the specification's order decides first: a parameter accepts
+  // what another does if that one widens to it. So 'foo(double)' is less
+  // specific than 'foo(float)', and 'foo(1)' calls the latter.
   auto isLessSpecific{[&](llvm::ArrayRef<const Parameter *> paramsA,
-                          llvm::ArrayRef<const Parameter *> paramsB) {
+                          llvm::ArrayRef<const Parameter *> paramsB,
+                          bool isArithmeticOrdered) {
     SMDL_SANITY_CHECK(paramsA.size() == paramsB.size());
     for (size_t i = 0; i < paramsA.size(); i++) {
       if (!paramsA[i] || !paramsB[i])
         continue; // Unresolved variadic arguments do not participate
-      if (!paramAccepts(emitter.context, paramsA[i]->type, paramsB[i]->type))
+      Type *argType{args[i].value.type};
+      Type *typeA{paramsA[i]->type};
+      Type *typeB{paramsB[i]->type};
+      if (isArithmeticOrdered && isArithmeticPair(typeA, typeB) &&
+          !isNarrowing(emitter.context, argType, typeA) &&
+          !isNarrowing(emitter.context, argType, typeB)) {
+        if (!isWidening(emitter.context, typeB, typeA)) return false;
+      } else if (!paramAccepts(emitter.context, typeA, typeB)) {
         return false;
+      }
     }
     return true;
   }};
-  auto beatsBySpecificity{
-      [&](const Overload &overloadA, const Overload &overloadB) {
-        return isLessSpecific(overloadB.params, overloadA.params) &&
-               !isLessSpecific(overloadA.params, overloadB.params);
-      }};
+  auto beatsBySpecificity{[&](bool isArithmeticOrdered) {
+    return [&, isArithmeticOrdered](const Overload &overloadA,
+                                    const Overload &overloadB) {
+      return isLessSpecific(overloadB.params, overloadA.params,
+                            isArithmeticOrdered) &&
+             !isLessSpecific(overloadA.params, overloadB.params,
+                             isArithmeticOrdered);
+    };
+  }};
+  // From MDL 1.9: a signature whose parameter types are a strict prefix of
+  // another's is the more specific, so 'f(1)' calls 'f(int a)' over
+  // 'f(int a, int b = 0)'.
+  auto beatsByPrefix{[&](const Overload &overloadA, const Overload &overloadB) {
+    const ParameterList &paramsA{overloadA.func->params};
+    const ParameterList &paramsB{overloadB.func->params};
+    if (paramsA.isVariadic || paramsB.isVariadic ||
+        paramsA.size() >= paramsB.size())
+      return false;
+    for (size_t i = 0; i < paramsA.size(); i++)
+      if (paramsA[i].type != paramsB[i].type) return false;
+    return true;
+  }};
   // Remove every candidate beaten by another candidate, first by conversion
-  // quality, then by specificity among what remains. Both relations are
-  // strict partial orders, so at least one candidate always survives. If
-  // more than one survives, the call is genuinely ambiguous: fail loudly
-  // instead of picking by declaration order.
+  // quality, then by specificity among what remains, then by prefix, and
+  // last by specificity with arithmetic types accepting each other. Each
+  // relation is a strict partial order, so at least one candidate always
+  // survives. If more than one survives, the call is genuinely ambiguous:
+  // fail loudly instead of picking by declaration order.
   auto filterBeaten{[&](auto &&beats) {
     llvm::SmallVector<bool> beaten{
         llvm::SmallVector<bool>(overloads.size(), false)};
@@ -1645,7 +1821,9 @@ FunctionType *FunctionType::resolveOverload(Emitter &emitter,
     viableContract = overload.func;
   }
   filterBeaten(beatsByConversion);
-  filterBeaten(beatsBySpecificity);
+  filterBeaten(beatsBySpecificity(/*isArithmeticOrdered=*/true));
+  filterBeaten(beatsByPrefix);
+  filterBeaten(beatsBySpecificity(/*isArithmeticOrdered=*/false));
   auto isContractAlone{[](FunctionType *func) {
     return func->isOpen() && !func->decl.definition;
   }};
@@ -1732,7 +1910,7 @@ void FunctionType::checkImplementation(Emitter &emitter,
   // The same question a call dispatching on the struct asks.
   llvm::SmallVector<FunctionType *> funcs{};
   for (auto func{lastOverload(this)}; func; func = func->prevOverload)
-    funcs.push_back(func);
+    if (!func->supersededBy) funcs.push_back(func);
   appendImplementations(emitter, structType, declName, funcs);
   const Module *module{structType.decl.srcLoc.module};
   std::string notes{};
@@ -3397,9 +3575,18 @@ Value UnionType::invoke(Emitter &emitter, const ArgumentList &args,
           lvArg, llvm::Align(context.getAlignOf(argUnionType)),
           std::min(requiredSize, argUnionType->requiredSize));
       if (!arg.isLValue()) emitter.createLifetimeEnd(lvArg);
-      Value index{emitter.rvalue(emitter.accessIndex(
-          context.getComptimeUnionIndexMap(argUnionType, this),
-          emitter.accessField(arg, "#idx", srcLoc), srcLoc))};
+      // The case index is always in bounds of the map, so it is read
+      // without the check an index expression makes.
+      Value indexMap{context.getComptimeUnionIndexMap(argUnionType, this)};
+      Value index{RValue(
+          context.getIntType(),
+          emitter.builder.CreateLoad(
+              context.getIntType()->llvmType,
+              emitter.builder.CreateGEP(
+                  indexMap.type->llvmType, indexMap,
+                  {emitter.builder.getInt32(0),
+                   emitter.rvalue(emitter.accessField(arg, "#idx", srcLoc))
+                       .llvmValue})))};
       emitter.builder.CreateStore(index,
                                   emitter.accessField(lv, "#idx", srcLoc));
       // Large unions stay memory-resident: return the slot as an lvalue

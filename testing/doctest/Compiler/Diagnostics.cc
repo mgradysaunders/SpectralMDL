@@ -222,6 +222,70 @@ TEST_CASE("Compiler: the overloads a rejected call names") {
     CHECK_CONTAINS(compileError("#smdl\nexec { int[3] a(1, 2); }\n").message,
                    "takes 3 elements or one array of that size");
   }
+  SUBCASE("Narrowing to every overload decides nothing") {
+    // A widening conversion beats a narrowing one, and the specification's
+    // order decides between two that widen, but nothing decides between two
+    // that narrow, least of all the narrower type.
+    smdl::Error error{compileError("#smdl\n@(pure) int f(int x) = x;\n"
+                                   "@(pure) int f(float x) = int(x);\n"
+                                   "exec { #assert(f(1.5d) == 1); }\n")};
+    CHECK_CONTAINS(error.message,
+                   "Function \"f\" is ambiguous for arguments \"(double)\"");
+  }
+  SUBCASE("Overloads the arguments rank in opposite orders are ambiguous") {
+    // The specification's own example: each overload is exact for one
+    // argument and widens the other.
+    smdl::Error error{compileError(
+        "mdl 1.9;\nint bar(float a, double b) = 5;\n"
+        "int bar(double a, float b) = 6;\n"
+        "export material m() = material(surface: material_surface(emission:\n"
+        "  material_emission(intensity: color(float(bar(1.0f, 1.0f))))));\n")};
+    CHECK_CONTAINS(error.message, "Function \"bar\" is ambiguous for "
+                                  "arguments \"(float, float)\"");
+  }
+}
+
+TEST_CASE("Compiler: a function declared ahead of its definition") {
+  // MDL declares a function ahead of the definition that follows it, and
+  // the two are one function only if they declare the same one.
+  SUBCASE("The definition returns what the declaration does") {
+    CHECK_CONTAINS(compileError("mdl 1.9;\nfloat f(float x);\n"
+                                "int f(float x) { return int(x); }\n")
+                       .message,
+                   "Function \"f\" is declared again returning \"int\", "
+                   "where its declaration at [<string ::diag>:2:1] returns "
+                   "\"float\"");
+  }
+  SUBCASE("The definition names each parameter as the declaration does") {
+    CHECK_CONTAINS(compileError("mdl 1.9;\nfloat f(float x);\n"
+                                "float f(float y) { return y; }\n")
+                       .message,
+                   "Function \"f\" is declared again with parameter \"y\", "
+                   "which its declaration at [<string ::diag>:2:1] names "
+                   "\"x\"");
+  }
+  SUBCASE("Only the first declaration has default initializers") {
+    CHECK_CONTAINS(
+        compileError("mdl 1.9;\nfloat f(float x, float y = 1.0);\n"
+                     "float f(float x, float y = 2.0) { return x + y; }\n")
+            .message,
+        "Function \"f\" is declared again with a default initializer for "
+        "\"y\", which only its first declaration, at "
+        "[<string ::diag>:2:1], may have");
+  }
+  SUBCASE("A call compiled before the definition says so") {
+    // A material compiles where it is declared, so a definition below it
+    // is one it cannot reach.
+    CHECK_CONTAINS(
+        compileError(
+            "mdl 1.9;\nfloat f(float x);\n"
+            "export material m() = material(surface: material_surface(\n"
+            "  emission: material_emission(intensity: color(f(1.0)))));\n"
+            "float f(float x) { return x; }\n")
+            .message,
+        "Function \"f\" declared at [<string ::diag>:2:1] is not defined "
+        "before this call");
+  }
 }
 
 TEST_CASE("Compiler: what an open function refuses") {

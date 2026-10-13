@@ -41,37 +41,46 @@ export float3 motion() = $state.motion;
 @(macro)
 export int texture_space_max() = $state.textureSpaceCount;
 
+/// Is `i` the index of an available texture space? The functions of a
+/// texture space return zero for any other index, as the specification has
+/// them do.
+@(macro)
+bool isTextureSpace(const int i) = 0 <= i && i < $state.textureSpaceCount;
+
 /// The texture coordinates of texture space `i`.
 @(macro)
-export float3 texture_coordinate(const int i) = $state.textureCoordinate[i];
+export float3 texture_coordinate(const int i) =
+  isTextureSpace(i) ? $state.textureCoordinate[i] : float3(0.0);
 
 /// The tangent in the direction of increasing U in texture space `i`.
 @(macro)
-export float3 texture_tangent_u(const int i) = $state.textureTangentU[i];
+export float3 texture_tangent_u(const int i) =
+  isTextureSpace(i) ? $state.textureTangentU[i] : float3(0.0);
 
 /// The tangent in the direction of increasing V in texture space `i`.
 @(macro)
-export float3 texture_tangent_v(const int i) = $state.textureTangentV[i];
+export float3 texture_tangent_v(const int i) =
+  isTextureSpace(i) ? $state.textureTangentV[i] : float3(0.0);
 
 /// The geometric tangent in the direction of increasing U in texture space `i`.
 @(macro)
-export float3 geometry_tangent_u(const int i) = $state.geometryTangentU[i];
+export float3 geometry_tangent_u(const int i) =
+  isTextureSpace(i) ? $state.geometryTangentU[i] : float3(0.0);
 
 /// The geometric tangent in the direction of increasing V in texture space `i`.
 @(macro)
-export float3 geometry_tangent_v(const int i) = $state.geometryTangentV[i];
+export float3 geometry_tangent_v(const int i) =
+  isTextureSpace(i) ? $state.geometryTangentV[i] : float3(0.0);
 
 /// The shading tangent space of texture space `i` as the matrix of tangent U, tangent V, and normal.
 @(macro)
-export float3x3 tangent_space(const int i) = float3x3(
-  $state.textureTangentU[i], $state.textureTangentV[i], $state.normal);
+export float3x3 tangent_space(const int i) =
+  float3x3(texture_tangent_u(i), texture_tangent_v(i), $state.normal);
 
 /// The geometric tangent space of texture space `i` as the matrix of tangent U, tangent V, and normal.
 @(macro)
-export float3x3 geometry_tangent_space(const int i) = float3x3(
-  $state.geometryTangentU[i],
-  $state.geometryTangentV[i],
-  $state.geometryNormal);
+export float3x3 geometry_tangent_space(const int i) =
+  float3x3(geometry_tangent_u(i), geometry_tangent_v(i), $state.geometryNormal);
 
 /// The object ID provided by the renderer.
 @(macro)

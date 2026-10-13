@@ -1,5 +1,6 @@
-mdl 1.8;
+mdl 1.9;
 
+import ::anno::*;
 import ::df::*;
 
 /* Block comments nest, /* so this one closes here */ and the outer one
@@ -34,4 +35,56 @@ export ConformantPoint conformantOrigin() = ConformantPoint();
 export int conformantDeclaredN() {
   ConformantPoint p;
   return p.n;
+}
+
+// An index past either end of an array reads the element type default
+// constructed, and a write there goes nowhere, as MDL 1.8 has it. Only a
+// compile-time index can be rejected where it compiles, so these take the
+// index as a parameter. The struct has an initializer to tell its default
+// from zero.
+export struct ConformantDefaulted {
+  int n = 7;
+};
+
+export int conformantAt(int i) {
+  int[3] a(1, 2, 3);
+  return a[i];
+}
+
+export int conformantSumAfterWrite(int i) {
+  int[2] a;
+  a[i] = 5;
+  return a[0] + a[1];
+}
+
+export int conformantDefaultedAt(int i) {
+  ConformantDefaulted[2] a(
+    ConformantDefaulted(n: 1), ConformantDefaulted(n: 2));
+  return a[i].n;
+}
+
+export float conformantComponent(int i) {
+  float3 v(1.0, 2.0, 3.0);
+  return v[i];
+}
+
+// Overload resolution as the specification has it. An `int` argument
+// converts to `float` and to `double` alike, and `float` is the more
+// specific, since it converts to `double`. A signature whose parameter
+// types begin another's is the more specific of the two (MDL 1.9).
+export int conformantWidened(float x [[anno::unused()]]) = 2;
+export int conformantWidened(double x [[anno::unused()]]) = 3;
+
+export int conformantPrefixed(int a [[anno::unused()]]) = 1;
+export int conformantPrefixed(
+  int a [[anno::unused()]], int b = 0 [[anno::unused()]]) = 2;
+
+// A function declared ahead of its definition, with the default
+// initializers on the declaration, and called in between.
+export float conformantSum(float x, float y = 2.0);
+
+export float conformantSumOfOne(float x) = conformantSum(x);
+
+export float conformantSum(float x, float y) {
+  return x + y;
 }

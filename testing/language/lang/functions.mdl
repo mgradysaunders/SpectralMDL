@@ -1,11 +1,15 @@
 /// Functions.
 ///
 /// Overload resolution ranks by the arguments, not by declaration order,
-/// which matters most where two parameter types convert to each other. A
-/// variant, `f(*) = g(a: 1)`, declares a function whose parameters are
-/// another function's with some already bound. `@(macro)` marks a function
-/// that expands at its call site rather than being emitted once, which is
-/// what lets a parameter be a type, a lambda, or a size.
+/// which matters most where two parameter types convert to each other.
+/// Arithmetic types do so both ways here, and the specification's order,
+/// in which `float` is more specific than `double` because it widens to
+/// it, decides between them. A function may be declared ahead of its
+/// definition, as in C. A variant, `f(*) = g(a: 1)`, declares a function
+/// whose parameters are another function's with some already bound.
+/// `@(macro)` marks a function that expands at its call site rather than
+/// being emitted once, which is what lets a parameter be a type, a lambda,
+/// or a size.
 ///
 /// Two parameter forms are the dialect's own. A voided parameter drops out
 /// of the signature entirely, so a generic body can accept an argument that
@@ -283,6 +287,76 @@ int overloadRank(int x) {
 unit_test "Exact overload match beats implicit conversion" {
   #assert(overloadRank(5) == 2);
   #assert(overloadRank(1.5) == 1);
+}
+
+// Between two arithmetic parameter types the specification's order decides,
+// in which a type is more specific than the types it widens to: an `int`
+// argument converts to `float` and to `double` alike, and `float` wins
+// because it widens to `double`. The dialect converts the other way too,
+// which narrows, and a widening conversion beats a narrowing one, so a
+// `float` argument takes `double` over `int`. Where the order cannot decide,
+// the other parameters still can: the `float` takes the first parameter of
+// `widenedOrNot` and `int` the second, and `int` decides it, as a concrete
+// type does over `auto`.
+@(pure)
+int widened(float x [[anno::unused()]]) = 1;
+
+@(pure)
+int widened(double x [[anno::unused()]]) = 2;
+
+@(pure)
+int narrowedOrWidened(int x [[anno::unused()]]) = 1;
+
+@(pure)
+int narrowedOrWidened(double x [[anno::unused()]]) = 2;
+
+@(pure)
+int widenedOrNot(float x [[anno::unused()]], auto y [[anno::unused()]]) = 1;
+
+@(pure)
+int widenedOrNot(double x [[anno::unused()]], int y [[anno::unused()]]) = 2;
+
+unit_test "An overload is chosen by the order arithmetic types widen in" {
+  #assert(widened(1) == 1);
+  #assert(widened(true) == 1);
+  #assert(widened(1.0f) == 1);
+  #assert(widened(1.0d) == 2);
+  #assert(narrowedOrWidened(1.0f) == 2);
+  #assert(widenedOrNot(1, 1) == 2);
+}
+
+// A signature whose parameter types begin another's is the more specific
+// (MDL 1.9), so where both accept the call, the shorter one takes it.
+@(pure)
+int prefixed(int a [[anno::unused()]]) = 1;
+
+@(pure)
+int prefixed(int a [[anno::unused()]], int b = 0 [[anno::unused()]]) = 2;
+
+unit_test "A signature that begins another is the more specific" {
+  #assert(prefixed(1) == 1);
+  #assert(prefixed(1, 2) == 2);
+  #assert(prefixed(a: 1, b: 2) == 2);
+}
+
+// A function may be declared ahead of its definition, as in C, and called
+// in between. The declarations are one function, and its default
+// initializers are on the first of them and nowhere else.
+@(pure)
+float declaredAhead(float x, float y = 2.0);
+
+@(pure)
+float callsAhead(float x) = declaredAhead(x);
+
+@(pure)
+float declaredAhead(float x, float y) {
+  return x + y;
+}
+
+unit_test "A function declared ahead of its definition is one function" {
+  #assert(callsAhead(1.0) == 3.0);
+  #assert(declaredAhead(1.0) == 3.0);
+  #assert(declaredAhead(1.0, y: 5.0) == 6.0);
 }
 
 // Declaration-order visibility: lazily emitted bodies (macro expansions,

@@ -930,6 +930,11 @@ public:
   /// The next overload by declaration order.
   FunctionType *nextOverload{};
 
+  /// The declaration of the same function that stands for this one, if
+  /// any: the one with the definition, or the newest if neither has one.
+  /// Overload resolution passes over this one. See `initialize`.
+  FunctionType *supersededBy{};
+
   /// The return type.
   Type *returnType{};
 

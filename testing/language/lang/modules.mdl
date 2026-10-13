@@ -112,3 +112,31 @@ unit_test "A conformant struct constructs the fields it gives no initializer" {
   #assert(packages::conformant::ConformantPoint().n == 0);
   #assert(packages::conformant::conformantDeclaredN() == 0);
 }
+
+unit_test "A conformant index out of bounds reads the default and writes nowhere" {
+  // See `packages/conformant.mdl`. The check is the specification's, so it
+  // is made where the index is written in a conformant module; an index in
+  // the dialect is unchecked, as in C.
+  #assert(packages::conformant::conformantAt(1) == 2);
+  #assert(packages::conformant::conformantAt(3) == 0);
+  #assert(packages::conformant::conformantAt(-1) == 0);
+  #assert(packages::conformant::conformantSumAfterWrite(1) == 5);
+  #assert(packages::conformant::conformantSumAfterWrite(2) == 0);
+  #assert(packages::conformant::conformantSumAfterWrite(-1) == 0);
+  #assert(packages::conformant::conformantDefaultedAt(1) == 2);
+  #assert(packages::conformant::conformantDefaultedAt(2) == 7);
+  #assert(packages::conformant::conformantComponent(2) == 3.0);
+  #assert(packages::conformant::conformantComponent(3) == 0.0);
+}
+
+unit_test "A conformant overload set resolves as the specification has it" {
+  #assert(packages::conformant::conformantWidened(1) == 2);
+  #assert(packages::conformant::conformantWidened(1.0f) == 2);
+  #assert(packages::conformant::conformantWidened(1.0d) == 3);
+  #assert(packages::conformant::conformantPrefixed(1) == 1);
+  #assert(packages::conformant::conformantPrefixed(1, 2) == 2);
+  // Declared ahead of its definition, with the defaults on the declaration.
+  #assert(packages::conformant::conformantSumOfOne(1.0) == 3.0);
+  #assert(packages::conformant::conformantSum(1.0) == 3.0);
+  #assert(packages::conformant::conformantSum(1.0, y: 5.0) == 6.0);
+}
