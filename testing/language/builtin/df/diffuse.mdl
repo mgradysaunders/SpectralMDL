@@ -1,6 +1,10 @@
 /// The rough reflection lobes that are not microfacet models: the EON
-/// diffuse model and the LTC sheen fit, both of which must conserve energy
-/// and report a density their sampling routine draws from.
+/// diffuse model, the LTC sheen fit, which `microflake_sheen_bsdf` names as
+/// well, and the dusty diffuse model of d'Eon, all of which must conserve
+/// energy and report a density their sampling routine draws from. The
+/// dusty diffuse values are pinned to a double-precision port of
+/// `lambert_sphere_brdf` in the MDL SDK's libbsdf
+/// (https://github.com/NVIDIA/MDL-SDK, `src/mdl/jit/libbsdf`).
 #smdl
 
 import ::df::*;
@@ -50,4 +54,56 @@ unit_test "The LTC sheen fit conserves energy and matches its acceptance" {
     df::sheen_bsdf(tint: 1.0, roughness: 0.8), woG, 1.0);
   scatter::checkDensityAgainstAcceptance(
     df::sheen_bsdf(tint: 1.0, roughness: 0.6, multiscatter_tint: 0.8), wo, 1.0);
+}
+
+unit_test "The microflake sheen is the LTC sheen" {
+  const auto wo = math::normalize(float3(-0.3, 0.4, 0.8));
+  const auto wi = math::normalize(float3(+0.5, 0.2, 0.9));
+  #assert(#all(
+    scatter::evaluate(df::microflake_sheen_bsdf(roughness: 0.3, tint: 0.8), wo, wi).f ==
+    scatter::evaluate(df::sheen_bsdf(roughness: 0.3, tint: 0.8), wo, wi).f));
+  #assert(#all(
+    scatter::evaluate(
+      df::microflake_sheen_bsdf(roughness: 0.6, multiscatter_tint: 0.5), wo, wi).f ==
+    scatter::evaluate(
+      df::sheen_bsdf(roughness: 0.6, multiscatter_tint: 0.5), wo, wi).f));
+}
+
+unit_test "The dusty diffuse model matches the reference implementation" {
+  const auto cases = float3[4][2](
+    float3[2](float3(-0.3, 0.4, 0.8), float3(0.5, 0.2, 0.9)),
+    float3[2](float3(0.3, -0.2, 0.9), float3(0.3, -0.2, 0.9)),
+    float3[2](float3(0.8, 0.1, 0.35), float3(-0.6, 0.1, 0.5)),
+    float3[2](float3(0.1, 0.9, 0.2), float3(0.2, 0.8, 0.3)));
+  const auto tints = float[4](0.6, 0.6, 1.0, 0.25);
+  // The BRDF times the cosine of the incoming direction.
+  const auto expected = float[4](
+    0.153075483561549, 0.1813478122415616, 0.16239230600781737,
+    0.08400935399371595);
+  for (int i = 0; i < 4; i++) {
+    const auto wo = math::normalize(cases[i][0]);
+    const auto wi = math::normalize(cases[i][1]);
+    const auto f = scatter::evaluate(
+      df::dusty_diffuse_reflection_bsdf(tint: tints[i]), wo, wi).f;
+    #assert(#all(f ~== (1e-5) expected[i]));
+    // A color tint is the same model at every wavelength.
+    #assert(#all(
+      scatter::evaluate(
+        df::dusty_diffuse_reflection_bsdf(tint: color(tints[i])), wo, wi).f ~==
+      (1e-5) expected[i]));
+  }
+}
+
+unit_test "The dusty diffuse model conserves energy and matches its acceptance" {
+  // At unit tint the scatterers absorb nothing. The paper's fits leave the
+  // directional albedo one to two percent short of one.
+  const auto wo = math::normalize(float3(0.1, 0.2, 0.97));
+  const auto woG = math::normalize(float3(0.8, 0.1, 0.35));
+  const auto b = df::dusty_diffuse_reflection_bsdf(tint: 1.0);
+  const auto E0 = scatter::furnaceIntegral(b, wo);
+  const auto E1 = scatter::furnaceIntegral(b, woG);
+  #assert((0.97 < E0) & (E0 < 1.0));
+  #assert((0.97 < E1) & (E1 < 1.0));
+  scatter::checkDensityAgainstAcceptance(b, wo, 1.0);
+  scatter::checkDensityAgainstAcceptance(b, woG, 1.0);
 }

@@ -1646,6 +1646,140 @@ auto scatterDraw(
 }
 //--}
 
+//--{ dusty_diffuse_reflection_bsdf
+// The dusty diffuse model implemented here is the BRDF of a half space of
+// spherical Lambertian scatterers of d'Eon, "An Analytic BRDF for Materials
+// with Spherical Lambertian Scatterers", EGSR 2021, Computer Graphics Forum
+// 40(4), 153-161. The single scattering is exact. The whole is the paper's
+// fits to its zeroth and first azimuthal modes, from the zeroth of which
+// the single scattering takes back its own share, and the tint is the
+// albedo the surface shows, which a fit of the paper inverts to the albedo
+// of the scatterers. The constants and their arrangement are those of
+// NVIDIA's reference implementation, `lambert_sphere_brdf` in the MDL SDK's
+// libbsdf (https://github.com/NVIDIA/MDL-SDK, BSD-3-Clause). The lobe is
+// sampled as a cosine.
+
+/// The phase function of a Lambertian sphere, normalized over the sphere,
+/// at the cosine `u` of the scattering angle.
+@(pure)
+float lambertSpherePhase(const float u) =
+  2 * (#sqrt(#max(1 - u * u, 0.0)) - u * #acos(clamp(u, -1.0, 1.0))) / (3 * $PI * $PI);
+
+/// The fit to the H-function from which the zeroth azimuthal mode is built,
+/// at the cosine `u` and the scatterer albedo `c`.
+@(pure macro)
+auto dustyH0(const float u, const auto c) {
+  const auto sqrtC(#sqrt(1 - c));
+  const auto a(
+    (8.216443463470172 + 1.501116252342486 * #pow(sqrtC, 6.054351911707695)) / (4.175932557866179 - 1.2122216865199813 * sqrtC));
+  const auto d(
+    (7.773097842804312 - 0.5658108102188075 * #pow(sqrtC, 0.9615460393324836)) / (8.659120811349371 - 0.15997430541238322 * sqrtC * (1 - c) * (1 - c) * (1 - c)));
+  const auto ud(#pow(u, d));
+  return (1 + a * ud) / (1 + a * #sqrt(1 - 2 * ((89 * c) / 288 + (59 * c * c) / 288 - c * c * c / 72)) * ud);
+}
+
+/// The fit to the H-function from which the first azimuthal mode is built.
+@(pure macro)
+auto dustyH1(const float u, const auto c) = #exp(
+  (-0.14483935877260054 * c + 0.024285125615255733 * c * c) * #pow(u, 0.45944184025347456 - 1.0787917226917565 * u + 1.8572804924335546 * u * u - 1.1283119660147671 * u * u * u));
+
+/// The zeroth azimuthal mode, at the cosines `ui` and `uo`.
+@(pure macro)
+auto dustyMode0(const float ui, const float uo, const auto c) {
+  const auto t1(1 - c);
+  const auto t2(#sqrt(t1));
+  const auto t3(t1 * t2);
+  const auto A((69 * c) / 128);
+  const auto B(
+    (-0.08446297239646791 + 0.5153566145541554 * t2 - 0.77757371002123 * t1 + 0.34668869623791543 * t3) / (0.9648932738041012 - 0.6655015709030936 * t2 + 0.1826019462608555 * t1));
+  const auto C(
+    (682.8479477533338 - 2567.7368047535556 * t2 + 7487.987105705168 * t1 - 5602.448801045478 * t3) / (5850.602606063662 - 4008.3309624647227 * t2 + 1480.250743805733 * t1));
+  const auto D(
+    (0.2855294320307508 + 160.39651500649123 * t2 - 327.42799697993706 * t1 + 166.88327184107732 * t3) / (674.1908010450103 - 412.9837444306491 * t2 + 596.4232294419696 * t1));
+  const auto E((15 * t1 * c * (3 + (4 * c) / 3)) / 128);
+  const auto F(
+    (-1.9208967199948512 - 242.16001167844007 * t2 - 21.914139454773085 * t1 + 266.06342182761813 * t3) / (1499.904420175135 + 457.4200839912641 * t2 + 215.77342164754094 * t1));
+  return (0.5 / $PI) * dustyH0(ui, c) * dustyH0(uo, c) / (ui + uo) * (A + C * ui * uo + E * ui * ui * uo * uo + B * (ui + uo) + D * ui * uo * (ui + uo) + F * (ui * ui + uo * uo));
+}
+
+/// The first azimuthal mode, at the cosines `ui` and `uo`, to be scaled by
+/// the cosine of the azimuth between the directions times both sines.
+@(pure macro)
+auto dustyMode1(const float ui, const float uo, const auto c) {
+  const auto l(-0.05890107167021953 * c - 0.004740543453386809 * c * c);
+  const auto H1H1(dustyH1(ui, c) * dustyH1(uo, c));
+  return (2 / $PI) * -((c * (64 + 45 * ui * uo)) / 48 - (15 * (1 + 0.44 * c) * c * ui * uo * H1H1) / 16 - (4 * c * (1 + l * ui) * (1 + l * uo) * H1H1) / 3) / (8 * (ui + uo));
+}
+
+/// The dusty diffuse BRDF, without the cosine, given the cosines `ui` and
+/// `uo`, the cosine `k` of the angle between the two directions, and the
+/// albedo of the surface.
+@(pure)
+auto dustyDiffuseBRDF(
+  const float ui, const float uo, const float k, const auto albedo) {
+  // The albedo of the scatterers that gives the surface this albedo.
+  const auto a(saturate(albedo));
+  const auto c((1 - #pow(1 - a, 2.73556)) / (1 - 0.184096 * #pow(1 - a, 2.48423)));
+  const float fSingle(lambertSpherePhase(-k) / (ui + uo));
+  const float fSingleMode0(
+    (1 / $PI) * (207 + 256 * ui * uo - 45 * (ui * ui + uo * uo) + 135 * ui * ui * uo * uo) / (768 * (ui + uo)));
+  return #max(
+    c * (fSingle - fSingleMode0) + dustyMode0(ui, uo, c) + dustyMode1(ui, uo, c) * (k - ui * uo),
+    0.0);
+}
+
+/// The dusty diffuse reflection BSDF, being reflection from a half space of
+/// spherical Lambertian scatterers, as from dust or regolith.
+export struct dusty_diffuse_reflection_bsdf: bsdf {
+  /// The tint.
+  ///
+  /// > Scaling factor, defined as a color, multiplied by the
+  /// > result of the distribution function.
+  ///
+  /// NOTE: The tint is the albedo the scatterers give the surface, so it is
+  /// saturated, and it shapes the lobe as well as scaling it.
+  const $(color | float) tint = 1.0;
+
+  /// The handle.
+  $(?string) handle = none;
+
+  /// The flags.
+  static const int _lobes = DF_MATTE_BRDF;
+};
+
+@(pure)
+auto scatterEval(
+  const &dusty_diffuse_reflection_bsdf this,
+  inline const &ScatterEvalParams params) {
+  if (mode == scatter_reflect && recalculateTangentSpace(params)) {
+    const auto cosTheta(#abs(auto(wi.z, wo.z)));
+    // Horizon cull: zero the value and the density together.
+    return ScatterEvalResult(isBlack: true) if (!(#minValue(cosTheta) > MIN_COS_THETA));
+    const auto pdf(cosTheta[0] / $PI);
+    auto result(ScatterEvalResult(
+      f: dustyDiffuseBRDF(cosTheta[0], cosTheta[1], #sum(wi * wo), this.tint) * cosTheta[0],
+      pdf: pdf));
+    result.f *= shadingNormalCorrection if (isImportance);
+    return result;
+  } else {
+    return ScatterEvalResult(isBlack: true);
+  }
+}
+
+@(pure)
+auto scatterDraw(
+  const &dusty_diffuse_reflection_bsdf this [[anno::unused()]],
+  inline const &ScatterDrawParams params) {
+  if ((tbn := recalculateTangentSpace(params))) {
+    return ScatterDrawResult(
+             wi: (*tbn) * sampling::cosine_hemisphere_draw(xi.xy),
+             mode: scatter_reflect);
+  } else {
+    return ScatterDrawResult(); // Reject
+  }
+}
+//--}
+
 //--{ specular_bsdf
 /// The specular BSDF, being perfect mirror reflection and/or refractive
 /// transmission as a directional Dirac distribution.
@@ -2457,6 +2591,11 @@ auto scatterDraw(
     return ScatterDrawResult(); // Reject
   }
 }
+
+/// The microflake sheen BSDF of MDL 1.10, which specifies the sheen of
+/// Zeltner, Burley, and Chiang that `sheen_bsdf` implements, with the same
+/// parameters.
+export auto microflake_sheen_bsdf(*) = sheen_bsdf();
 //--}
 
 //--{ ward_geisler_moroder_bsdf

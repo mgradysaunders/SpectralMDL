@@ -68,6 +68,10 @@ unit_test "Every lobe, modifier, and combinator is bidirectionally consistent" {
     wi,
     ns);
   scatter::checkBidirectionalConsistency(
+    df::dusty_diffuse_reflection_bsdf(tint: 0.8), wo, wi);
+  scatter::checkBidirectionalConsistency(
+    df::dusty_diffuse_reflection_bsdf(tint: 0.8), wo, wi, ns);
+  scatter::checkBidirectionalConsistency(
     df::ward_geisler_moroder_bsdf(
       roughness_u: 0.4, roughness_v: 0.8, tint: 1.0, multiscatter_tint: 1.0),
     wo,

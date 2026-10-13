@@ -30,8 +30,14 @@ unit_test "Every elemental distribution accepts a handle that changes nothing" {
     scatter::evaluate(df::simple_glossy_bsdf(roughness_u: 0.3, handle: "h"), wo, wi).f ==
     scatter::evaluate(df::simple_glossy_bsdf(roughness_u: 0.3), wo, wi).f));
   #assert(#all(
+    scatter::evaluate(df::dusty_diffuse_reflection_bsdf(tint: 0.8, handle: "h"), wo, wi).f ==
+    scatter::evaluate(df::dusty_diffuse_reflection_bsdf(tint: 0.8), wo, wi).f));
+  #assert(#all(
     scatter::evaluate(df::sheen_bsdf(roughness: 0.3, handle: "h"), wo, wi).f ==
     scatter::evaluate(df::sheen_bsdf(roughness: 0.3), wo, wi).f));
+  #assert(#all(
+    scatter::evaluate(df::microflake_sheen_bsdf(roughness: 0.3, handle: "h"), wo, wi).f ==
+    scatter::evaluate(df::microflake_sheen_bsdf(roughness: 0.3), wo, wi).f));
   #assert(#all(
     scatter::evaluate(df::ward_geisler_moroder_bsdf(roughness_u: 0.3, handle: "h"), wo, wi).f ==
     scatter::evaluate(df::ward_geisler_moroder_bsdf(roughness_u: 0.3), wo, wi).f));
