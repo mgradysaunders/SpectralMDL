@@ -357,6 +357,13 @@ export struct texture_2d {
   /// Construct by loading the image file(s) named by `name`, which
   /// must be a compile-time string.
   ///
+  /// `selector`, also compile-time, selects one channel of the image,
+  /// `"R"`, `"G"`, `"B"`, or `"A"`, which the texture then reads as gray
+  /// of alpha 1, after the gamma mode applies to the color channels.
+  /// Empty selects every channel. A gray image has no channel but its
+  /// gray, which `"R"`, `"G"`, and `"B"` all select, and `"A"` selects
+  /// nothing in an image without alpha.
+  ///
   /// `use_mipmap` must also be compile-time. Mip filtering is opt in:
   /// by default `num_levels` is 1, so every lod-aware lookup samples
   /// level 0 for the lifetime of the program. Pass `use_mipmap: true`
@@ -384,9 +391,10 @@ export struct texture_2d {
   texture_2d(
     const string name,
     const auto gamma = 0,
+    const string selector = "",
     const bool use_mipmap = false,
     const bool max_mipmap = false) =
-    #loadTexture2D(name, int(gamma), use_mipmap, max_mipmap);
+    #loadTexture2D(name, int(gamma), selector, use_mipmap, max_mipmap);
 
   /// The tile count.
   const int2 tile_count = int2(1, 1);
@@ -446,6 +454,10 @@ export struct texture_2d {
 
   /// The gamma mode.
   const int gamma = 0;
+
+  /// The channel the selector selects, 0 through 3 for `"R"` through
+  /// `"A"`, or -1 for every channel.
+  const int selector = -1;
 };
 
 /// The texture 3D structure.
@@ -466,6 +478,10 @@ export struct texture_3d {
   /// The index of the voxel at the lower corner of the extent in the file
   /// it was loaded from, which places a NanoVDB grid in its index space.
   const int3 offset = int3(0);
+
+  /// The transform from the index space of the file it was loaded from to
+  /// object space, see `tex::grid_to_object_space()`.
+  const float4x4 grid_to_object = float4x4(1.0);
 
   /// The number of bricks per axis, i.e., the extent divided by the
   /// brick extent of 16 voxels per axis, rounded up.
@@ -580,7 +596,8 @@ export struct light_profile {
 @(pure macro)
 export bool _resourceEqual(const auto a, const auto b) {
   if $(a <: texture_2d) {
-    return a.tile_table == b.tile_table && a.gamma == b.gamma;
+    return a.tile_table == b.tile_table && a.gamma == b.gamma &&
+           a.selector == b.selector;
   } else if $(a <: texture_3d) {
     return a.resource == b.resource && a.gamma == b.gamma;
   } else if $(a <: texture_cube) {

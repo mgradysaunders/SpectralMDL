@@ -18,7 +18,8 @@ namespace {
 bool hasNanoVDB() { return smdl::BuildInfo::get().withNanoVDB != nullptr; }
 
 // Do two grids agree everywhere: extent, background, value bounds,
-// world bounds, and every voxel of the extent?
+// world bounds, the index-to-world transform, and every voxel of the
+// extent?
 bool isSameGrid(const smdl::VoxelGrid &grid0, const smdl::VoxelGrid &grid1) {
   const smdl::int3 extent{grid0.getExtent()};
   if (!(extent.x == grid1.getExtent().x && extent.y == grid1.getExtent().y &&
@@ -29,6 +30,10 @@ bool isSameGrid(const smdl::VoxelGrid &grid0, const smdl::VoxelGrid &grid1) {
   if (grid0.getMaxValue() != grid1.getMaxValue()) return false;
   if (!isSame(grid0.getWorldBoundMin(), grid1.getWorldBoundMin()) ||
       !isSame(grid0.getWorldBoundMax(), grid1.getWorldBoundMax()))
+    return false;
+  // To the rounding a voxel size computed once in 'float' and once in
+  // 'double' may differ by.
+  if (!isNear(grid0.getIndexToWorld(), grid1.getIndexToWorld(), 1e-6f))
     return false;
   for (int z = 0; z < extent.z; z++)
     for (int y = 0; y < extent.y; y++)
@@ -206,6 +211,15 @@ TEST_CASE("VoxelGrid: the formats it round-trips and the majorants it builds") {
     writeVol(sourceName, NX, NY, NZ, values);
     smdl::VoxelGrid source{};
     REQUIRE_OK(source.loadFromFile(sourceName));
+    // A Mitsuba volume spans its bounds, from (-1, -2, -3) to (1, 2, 3),
+    // with its extent: index 0 is the lower corner, and the voxel size is
+    // the bounds divided by the extent.
+    CHECK_NEAR(source.getIndexToWorld(),
+               smdl::float4x4(smdl::float4(2.0f / NX, 0.0f, 0.0f, 0.0f),
+                              smdl::float4(0.0f, 4.0f / NY, 0.0f, 0.0f),
+                              smdl::float4(0.0f, 0.0f, 6.0f / NZ, 0.0f),
+                              smdl::float4(-1.0f, -2.0f, -3.0f, 1.0f)),
+               1e-6f);
     SUBCASE("As a Mitsuba volume") {
       std::string fileName{(tmpDir / "saved.vol").string()};
       REQUIRE_OK(source.saveToFile(fileName));

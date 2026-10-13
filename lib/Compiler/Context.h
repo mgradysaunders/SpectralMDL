@@ -392,6 +392,20 @@ public:
     return result;
   }
 
+  /// Get compile-time matrix constant, of `N` columns of `M` rows.
+  template <typename T, size_t N, size_t M>
+  [[nodiscard]] Value getComptimeMatrix(const Matrix<T, N, M> &value) {
+    static_assert(std::is_arithmetic_v<T> && N > 1 && M > 1);
+    llvm::IRBuilder<> builder{llvmContext};
+    Value result{
+        Value::zero(getArithmeticType(Scalar::get<T>(), Extent(N, M)))};
+    for (size_t j = 0; j < N; j++)
+      result.llvmValue = builder.CreateInsertValue(
+          result.llvmValue, getComptimeVector(value[j]).llvmValue,
+          {unsigned(j)});
+    return result;
+  }
+
   /// Get compile-time `string` constant.
   [[nodiscard]] Value getComptimeString(std::string_view value) {
     Value &result{strings_[value]};

@@ -239,6 +239,7 @@ void Image::clear() {
   numTexelsX_ = 0;
   numTexelsY_ = 0;
   numChannels_ = 1;
+  hasAlpha_ = false;
   texelSize_ = 1;
   numLevels_ = 1;
   hasRequestedMipLevels_ = false;
@@ -257,6 +258,7 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
                   &numChannels_)) {
       // If the number of channels is 3, i.e., RGB, round it up to 4
       // so all of our alignment assumptions work.
+      hasAlpha_ = numChannels_ == 2 || numChannels_ == 4;
       if (numChannels_ == 3) numChannels_ = 4;
       // Determine whether we should load 32-bit float, 16-bit unsigned int, or
       // 8-bit unsigned int.
@@ -320,6 +322,7 @@ std::optional<Error> Image::startLoad(const std::string &fileName) noexcept {
         throw Error("Cannot parse EXR header: invalid data window");
       const EXRChannels channels{selectEXRChannels(header)};
       numChannels_ = channels.numChannels;
+      hasAlpha_ = channels.indices[3] >= 0;
       if (channels.pixelType == EXR_PIXEL_HALF)
         format_ = FLOAT16, texelSize_ = 2 * numChannels_;
       else

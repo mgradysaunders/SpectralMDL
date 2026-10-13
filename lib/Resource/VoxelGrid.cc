@@ -45,6 +45,7 @@ struct FlatGrid final {
   float3 worldBoundMin{};
   float3 worldBoundMax{};
   int3 indexOffset{};
+  float4x4 indexToWorld{1.0f};
   std::vector<int32_t> brickTable{};
   std::vector<float> brickData{};
 };
@@ -143,6 +144,14 @@ tryFlattenNanoGrid(const nanovdb::GridHandle<nanovdb::HostBuffer> &handle,
   flat.worldBoundMax =
       float3(float(worldBBox.max()[0]), float(worldBBox.max()[1]),
              float(worldBBox.max()[2]));
+  // The map is 'world = mat * index + vec' with 'mat' in row-major order,
+  // so column 'j' of the transform is column 'j' of 'mat'.
+  const nanovdb::Map &map{grid->map()};
+  for (int j = 0; j < 3; j++)
+    flat.indexToWorld[j] = float4(float(map.mMatD[j]), float(map.mMatD[3 + j]),
+                                  float(map.mMatD[6 + j]), 0.0f);
+  flat.indexToWorld[3] = float4(float(map.mVecD[0]), float(map.mVecD[1]),
+                                float(map.mVecD[2]), 1.0f);
   // Mark occupancy exactly, without visiting every voxel of the
   // bounding box: the linearized leaf array covers all fine values, and
   // the active tiles of the internal levels cover constant regions. The
@@ -420,6 +429,17 @@ void loadMitsubaVol(const std::string &fileName, FlatGrid &flat) {
   initFlatGrid(flat, extent, /*background=*/0.0f);
   flat.worldBoundMin = float3(readFloat(24), readFloat(28), readFloat(32));
   flat.worldBoundMax = float3(readFloat(36), readFloat(40), readFloat(44));
+  // The bounds span the extent, which is the map 'buildNanoGrid()' writes.
+  const float3 voxelSize{
+      (flat.worldBoundMax.x - flat.worldBoundMin.x) / float(extent.x),
+      (flat.worldBoundMax.y - flat.worldBoundMin.y) / float(extent.y),
+      (flat.worldBoundMax.z - flat.worldBoundMin.z) / float(extent.z)};
+  flat.indexToWorld =
+      float4x4(float4(voxelSize.x, 0.0f, 0.0f, 0.0f),
+               float4(0.0f, voxelSize.y, 0.0f, 0.0f),
+               float4(0.0f, 0.0f, voxelSize.z, 0.0f),
+               float4(flat.worldBoundMin.x, flat.worldBoundMin.y,
+                      flat.worldBoundMin.z, 1.0f));
   const int64_t numValues{int64_t(extent.x) * extent.y * extent.z};
   if (mem.size() < 48 + size_t(numValues) * 4)
     throw Error("Mitsuba volume file is truncated");
@@ -541,6 +561,7 @@ void VoxelGrid::clear() noexcept {
   worldBoundMin_ = float3();
   worldBoundMax_ = float3();
   indexOffset_ = int3();
+  indexToWorld_ = float4x4(1.0f);
   majorantExtent_ = 1;
   majorantCount_ = int3();
   brickTable_.clear();
@@ -574,6 +595,7 @@ VoxelGrid::loadFromFile(const std::string &fileName,
     worldBoundMin_ = flat.worldBoundMin;
     worldBoundMax_ = flat.worldBoundMax;
     indexOffset_ = flat.indexOffset;
+    indexToWorld_ = flat.indexToWorld;
     brickTable_ = std::move(flat.brickTable);
     brickData_ = std::move(flat.brickData);
     // Compute the majorant grid over the cell voxels dilated by one on

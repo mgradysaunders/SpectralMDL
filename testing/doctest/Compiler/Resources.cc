@@ -1,7 +1,8 @@
 /// \file
 /// The resources a compile loads and caches: the warning a missing one
 /// raises and how often, what an image that is found and does not load
-/// reads as, the curve a spectrum library does not have, what each says
+/// reads as, the channels of an image a selector selects, the curve a
+/// spectrum library does not have, what each says
 /// in the log and in what order, the mip chain a texture bakes, the
 /// images an optimized module drops, the one symbol per file the JIT
 /// defines, and a resource of a kind the host defines and loads.
@@ -135,6 +136,71 @@ TEST_CASE("Compiler: an image that is found and does not load") {
     // The one load failure, and nothing about formats that disagree.
     REQUIRE(warnings.messages().size() == 1);
     CHECK_CONTAINS(warnings.messages()[0], "tile_1002.png");
+  }
+}
+
+TEST_CASE("Compiler: the channels of an image a selector selects") {
+  TempDir tmpDir{"texture-selector"};
+  // A 2x2 image of each layout a file may have: gray, gray and alpha, and
+  // RGB, which has no alpha either.
+  const uint8_t gray[4] = {0, 64, 128, 255};
+  const uint8_t grayAlpha[8] = {0, 255, 64, 191, 128, 127, 255, 63};
+  const uint8_t rgb[12] = {0, 0, 0, 64, 0, 0, 0, 64, 0, 0, 0, 64};
+  REQUIRE(!smdl::write8bitImage((tmpDir / "gray.png").string(), 2, 2, 1, gray));
+  REQUIRE(!smdl::write8bitImage((tmpDir / "gray_alpha.png").string(), 2, 2, 2,
+                                grayAlpha));
+  REQUIRE(!smdl::write8bitImage((tmpDir / "rgb.png").string(), 2, 2, 3, rgb));
+  auto runUnitTest{[&](std::string_view body) {
+    tmpDir.write("main.mdl", smdl::concat("#smdl\nimport ::tex::*;\n"
+                                          "unit_test \"The texture\" {\n",
+                                          body, "}\n"));
+    smdl::Compiler compiler{};
+    compiler.shouldEmitUnitTests = true;
+    if (std::string message{buildAll(compiler, {tmpDir / "main.mdl"})};
+        !message.empty())
+      return message;
+    StateStorage storage{compiler};
+    smdl::State state{storage.makeState()};
+    if (std::optional<smdl::Error> error{compiler.runUnitTests(state)})
+      return error->message;
+    return std::string();
+  }};
+  SUBCASE("A gray and alpha image is gray in R, G, and B") {
+    // Texel (1, 1), the second of the top row, is gray 64 and alpha 191.
+    CHECK(runUnitTest(
+              "  const auto t = texture_2d(\"gray_alpha.png\", "
+              "tex::gamma_linear);\n"
+              "  #assert(#all(tex::texel_float4(t, int2(1, 1)) ~== |1e-6| "
+              "float4(64.0 / 255, 64.0 / 255, 64.0 / 255, 191.0 / 255)));\n"
+              "  const auto a = texture_2d(\"gray_alpha.png\", "
+              "tex::gamma_linear, \"A\");\n"
+              "  #assert(tex::texel_float(a, int2(1, 1)) ~== |1e-6| 191.0 / "
+              "255);\n") == "");
+  }
+  // A selector that selects nothing in the file is a warning, as a file that
+  // is not found is, and the texture reads as invalid.
+  auto checkInvalid{[&](std::string_view fileName, std::string_view selector) {
+    return runUnitTest(smdl::concat(
+        "  const auto t = texture_2d(\"", fileName, "\", tex::gamma_linear, \"",
+        selector, "\");\n  #assert(!tex::texture_isvalid(t));\n"));
+  }};
+  SUBCASE("A 2D texture selects nothing but a channel") {
+    const CollectedLog warnings{"gray.png"};
+    CHECK(checkInvalid("gray.png", "light1.specular.R") == "");
+    REQUIRE(warnings.messages().size() == 1);
+    CHECK_CONTAINS(warnings.messages()[0],
+                   "Cannot select \"light1.specular.R\" of \"gray.png\": a "
+                   "2D texture selects \"R\", \"G\", \"B\", or \"A\"");
+  }
+  SUBCASE("An image without alpha has none to select") {
+    for (std::string_view fileName : {"gray.png", "rgb.png"}) {
+      const CollectedLog warnings{std::string(fileName)};
+      CHECK(checkInvalid(fileName, "A") == "");
+      REQUIRE(warnings.messages().size() == 1);
+      CHECK_CONTAINS(warnings.messages()[0],
+                     smdl::concat("Cannot select \"A\" of \"", fileName,
+                                  "\", which has no alpha channel"));
+    }
   }
 }
 

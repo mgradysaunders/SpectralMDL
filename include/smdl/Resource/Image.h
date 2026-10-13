@@ -186,6 +186,11 @@ public:
   /// Get the number of channels, must be 1, 2, or 4.
   [[nodiscard]] int getNumChannels() const noexcept { return numChannels_; }
 
+  /// Does the file have an alpha channel? A 2-channel image is gray and
+  /// alpha, and a 4-channel image may have been loaded from a file with
+  /// no alpha, as an RGB image is, whose alpha is then 1 throughout.
+  [[nodiscard]] bool hasAlpha() const noexcept { return hasAlpha_; }
+
   /// Get the number of texels in X at the given mip level.
   [[nodiscard]] int getNumTexelsX(int level = 0) const noexcept {
     return level > 0 ? std::max(numTexelsX_ >> level, 1) : numTexelsX_;
@@ -323,6 +328,9 @@ private:
 
   /// The number of channels, must be 1, 2, or 4 for proper alignment.
   int numChannels_{1};
+
+  /// Does the file have an alpha channel?
+  bool hasAlpha_{false};
 
   /// The number of texels in X.
   int numTexelsX_{0};

@@ -6,7 +6,8 @@
 ///   exactly at any coordinate.
 /// - `blob.nvdb`: a NanoVDB file holding two named float grids, both
 ///   written with NanoVDB's own `build::Grid`/`createNanoGrid`/
-///   `writeGrids` tooling:
+///   `writeGrids` tooling, and its default index-to-world map, which is
+///   the identity:
 ///   - `density`, first in the file: a dense box over the *global*
 ///     index region `[3,22] x [-5,10] x [7,20]`, so the active origin
 ///     is deliberately non-aligned and partially negative, with
@@ -79,6 +80,27 @@ unit_test "A Mitsuba volume reads its voxels and filters exactly" {
   // same brick, so the one-brick corners step below their base voxel.
   #assert(
     tex::lookup_float(t, float3(3.5 / 32, 1.0, 2.5 / 4)) == 3.0 + 35.0 + 200.0);
+}
+
+unit_test "The grid of a texture maps its texels to object space" {
+  // A Mitsuba volume places its bounding box, (0, 0, 0) to
+  // (3.2, 0.8, 0.4) here, over its extent: texel zero is the lower
+  // corner, and each voxel is 0.1 on every side.
+  const float4x4 m = tex::grid_to_object_space(texture_3d("linear_32x8x4.vol"));
+  #assert(#all(m * float4(0.0, 0.0, 0.0, 1.0) == float4(0.0, 0.0, 0.0, 1.0)));
+  #assert(#all(
+    m * float4(32.0, 8.0, 4.0, 1.0) ~== |1e-6| float4(3.2, 0.8, 0.4, 1.0)));
+  if $($HAS_NANOVDB) {
+    // Texel space is the grid's index space, where the offsets place the
+    // lower corner, and 'blob.nvdb' maps it to object space as it is.
+    const auto t = texture_3d("blob.nvdb");
+    const float4 corner(
+      tex::width_offset(t), tex::height_offset(t), tex::depth_offset(t), 1.0);
+    #assert(#all(tex::grid_to_object_space(t) * corner == corner));
+  }
+  // An invalid texture has no grid, and maps nothing anywhere else.
+  const float4 point(1.0, 2.0, 3.0, 1.0);
+  #assert(#all(tex::grid_to_object_space(texture_3d()) * point == point));
 }
 
 unit_test "A NanoVDB density grid reads its voxels" {

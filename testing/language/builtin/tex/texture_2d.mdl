@@ -1,6 +1,7 @@
 /// `::tex` two-dimensional lookups over the checked-in 4x4 fixtures: the
 /// mip chain's extents and texels, the wrap modes, the sRGB decode, what an
-/// opt-in mip filter changes, and an array of textures as a parameter.
+/// opt-in mip filter changes, the channel a selector reads, and an array of
+/// textures as a parameter.
 #smdl
 #search_dir "../../fixtures"
 
@@ -226,6 +227,38 @@ unit_test "sRGB decode is the piecewise IEC curve" {
   // power curve, so this pins the piecewise behavior specifically.
   const auto mid = tex::texel_float4(tDec, int2(1, 0)).x;
   #assert(mid ~== |1e-4| 0.05126);
+}
+
+unit_test "A selector reads one channel as gray" {
+  // Texel (1, 2) of 4x4.png is (64, 128, 0, 255) / 255.
+  const auto r = texture_2d("4x4.png", tex::gamma_linear, "R");
+  const auto g = texture_2d("4x4.png", tex::gamma_linear, "G");
+  const auto b = texture_2d("4x4.png", tex::gamma_linear, "B");
+  const auto a = texture_2d("4x4.png", tex::gamma_linear, "A");
+  const float4 gray64(float3(64.0 / 255), 1.0);
+  const float4 gray128(float3(128.0 / 255), 1.0);
+  #assert(#all(tex::texel_float4(r, int2(1, 2)) ~== |1e-6| gray64));
+  #assert(#all(tex::texel_float4(g, int2(1, 2)) ~== |1e-6| gray128));
+  #assert(#all(tex::texel_float4(b, int2(1, 2)) == float4(0.0, 0.0, 0.0, 1.0)));
+  #assert(#all(tex::texel_float4(a, int2(1, 2)) ~== |1e-6| float4(1.0)));
+  // Every way of reading a texel reads the channel: a texel of any
+  // width, a lookup, and a level of the chain.
+  #assert(tex::texel_float(g, int2(1, 2)) ~== |1e-6| 128.0 / 255);
+  #assert(#all(
+    tex::lookup_float3(g, float2(1.5 / 4, 2.5 / 4)) ~== |1e-6| float3(128.0 / 255)));
+  #assert(tex::level_texel_float(g, 0, int2(1, 2)) ~== |1e-6| 128.0 / 255);
+  // The gamma mode decodes the color channels before the selector reads
+  // one, and never decodes alpha.
+  const auto rDecoded = texture_2d("4x4.png", tex::gamma_srgb, "R");
+  const auto aDecoded = texture_2d("4x4.png", tex::gamma_srgb, "A");
+  #assert(tex::texel_float(rDecoded, int2(1, 2)) ~== |1e-4| 0.05126);
+  #assert(tex::texel_float(aDecoded, int2(1, 2)) ~== |1e-6| 1.0);
+  // A gray image is its gray in each of R, G, and B.
+  const auto ridge = texture_2d("ridge_16.png", tex::gamma_linear, "G");
+  #assert(tex::texel_float(ridge, int2(8, 0)) ~== |1e-6| 1.0);
+  // Two selectors of one file are two textures.
+  #assert(r != g);
+  #assert(r == texture_2d("4x4.png", tex::gamma_linear, "R"));
 }
 
 unit_test "A frame parameter is accepted and ignored" {

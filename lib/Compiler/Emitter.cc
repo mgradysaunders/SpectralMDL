@@ -2855,9 +2855,19 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
                  srcLoc);
     if (value.type == context.getFloatType(Extent(4))) // Early out?
       return value;
+    // A texel of one channel is gray, and one of two is gray and alpha, so
+    // the gray splats over R, G, and B. A missing alpha is 1.
     Value result{Value::zero(context.getFloatType(Extent(4)))};
     if (value.type->isArithmeticScalar()) {
       result.llvmValue = builder.CreateVectorSplat(4, value.llvmValue);
+    } else if (texelType->extent.numRows == 2) {
+      result.llvmValue = builder.CreateVectorSplat(
+          4, builder.CreateExtractElement(value.llvmValue, uint64_t(0)));
+      result.llvmValue = builder.CreateInsertElement(
+          result.llvmValue,
+          builder.CreateExtractElement(value.llvmValue, uint64_t(1)),
+          uint64_t(3));
+      return result;
     } else {
       for (uint64_t i = 0; i < texelType->extent.numRows; i++)
         result.llvmValue = builder.CreateInsertElement(
@@ -3107,21 +3117,25 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     return std::make_pair(std::string(args[0].value.getComptimeString()),
                           rvalue(args[1].value));
   }};
-  // The mip requests must be compile-time, unlike the gamma: they are
-  // baked into the texture as its level count and chain kind at
-  // emission time, which no runtime value can influence.
-  auto expectOneComptimeStringOneIntAndTwoComptimeBools{[&]() {
-    if (!(args.size() == 4 &&                 //
+  // The selector and the mip requests must be compile-time, unlike the
+  // gamma: they are baked into the texture as its channel, its level
+  // count, and its chain kind at emission time, which no runtime value
+  // can influence.
+  auto expectTwoComptimeStringsOneIntAndTwoComptimeBools{[&]() {
+    if (!(args.size() == 5 &&                 //
           args[0].value.isComptimeString() && //
           args[1].value.type->isArithmeticScalarInt() &&
-          args[2].value.isComptimeInt() && //
-          args[3].value.isComptimeInt()))
-      throwBadArguments("1 compile-time string argument, 1 int argument, and "
-                        "2 compile-time bool arguments");
+          args[2].value.isComptimeString() && //
+          args[3].value.isComptimeInt() &&    //
+          args[4].value.isComptimeInt()))
+      throwBadArguments("1 compile-time string argument, 1 int argument, 1 "
+                        "compile-time string argument, and 2 compile-time "
+                        "bool arguments");
     return std::make_tuple(std::string(args[0].value.getComptimeString()),
                            rvalue(args[1].value),
-                           args[2].value.getComptimeInt() != 0,
-                           args[3].value.getComptimeInt() != 0);
+                           std::string(args[2].value.getComptimeString()),
+                           args[3].value.getComptimeInt() != 0,
+                           args[4].value.getComptimeInt() != 0);
   }};
   // The '#load_*' resource intrinsics share one locate-or-warn
   // prologue: a file that cannot be found is a warning, and the
@@ -3178,8 +3192,26 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
   switch (intrinsicID) {
   case IntrinsicID::LoadTexture2D: {
     StructType *texture2DType{context.getTexture2DType()};
-    auto [fileName, valueGammaAsInt, useMipmap, maxMipmap] =
-        expectOneComptimeStringOneIntAndTwoComptimeBools();
+    auto [fileName, valueGammaAsInt, selector, useMipmap, maxMipmap] =
+        expectTwoComptimeStringsOneIntAndTwoComptimeBools();
+    // The channel the selector selects, or -1 for every channel. A 2D
+    // image has no data sets, so nothing but a channel is a selector, and
+    // a selector that selects nothing leaves the texture invalid, as a file
+    // that is not found does.
+    static constexpr std::string_view channelNames[]{"R", "G", "B", "A"};
+    const int channel{selector.empty()
+                          ? -1
+                          : int(std::find(std::begin(channelNames),
+                                          std::end(channelNames), selector) -
+                                std::begin(channelNames))};
+    if (channel == 4) {
+      context.compiler.logResourceWarningOnce_(
+          resourceSourceLocation(srcLoc), fileName,
+          concat("Cannot select ", SpellQuoted(selector), " of ",
+                 SpellQuoted(fileName),
+                 ": a 2D texture selects \"R\", \"G\", \"B\", or \"A\""));
+      return invoke(texture2DType, {}, srcLoc);
+    }
     const bool useMipLevels{useMipmap || maxMipmap};
     const Image::MipFilter mipFilter{maxMipmap ? Image::MIP_MAX
                                                : Image::MIP_MEAN};
@@ -3237,6 +3269,15 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
       }
     }
     if (!firstLoaded) return invoke(texture2DType, {}, srcLoc);
+    // A gray image is its gray in each of R, G, and B (see '#unpackFloat4'),
+    // so only alpha may be missing.
+    if (channel == 3 && !images[*firstLoaded]->hasAlpha()) {
+      context.compiler.logResourceWarningOnce_(
+          resourceSourceLocation(srcLoc), fileName,
+          concat("Cannot select \"A\" of ", SpellQuoted(fileName),
+                 ", which has no alpha channel"));
+      return invoke(texture2DType, {}, srcLoc);
+    }
     PointerType *texelPtrType{texelPtrTypeOf(*images[*firstLoaded])};
     // Only the level 0 texels of each tile are named; the higher
     // levels live contiguously behind them, at the offsets the tile
@@ -3296,7 +3337,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
          Argument{"tile_buffers", valueTileBuffers},
          Argument{"tile_table",
                   context.getComptimeIntArray(tileTable, ".tile_table")},
-         Argument{"gamma", valueGammaAsInt}},
+         Argument{"gamma", valueGammaAsInt},
+         Argument{"selector", context.getComptimeInt(channel)}},
         srcLoc);
   }
   case IntrinsicID::LoadTexture3D: {
@@ -3326,8 +3368,10 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
           return invoke(
               texture3DType,
               {Argument{"extent", context.getComptimeVector(extent)},
-               Argument{"offset", context.getComptimeVector(
-                                      voxelGrid.getIndexOffset())},
+               Argument{"offset",
+                        context.getComptimeVector(voxelGrid.getIndexOffset())},
+               Argument{"grid_to_object",
+                        context.getComptimeMatrix(voxelGrid.getIndexToWorld())},
                Argument{"brick_count", context.getComptimeVector(brickCount)},
                Argument{"brick_table",
                         context.getComptimePtr(

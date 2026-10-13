@@ -223,6 +223,19 @@ public:
     return worldBoundMax_;
   }
 
+  /// Get the transform from the file's index space to world space, the
+  /// affine map that takes the index of a voxel, as `getIndexOffset()`
+  /// places it, to the point in world space it stands for. For NanoVDB
+  /// this is the grid's own map, which may rotate or shear. A Mitsuba
+  /// volume has none, so its world bounds span the extent, as a NanoVDB
+  /// grid written by `saveToFile()` has them: index 0 is the lower corner
+  /// of the bounds, and every voxel is the bounds divided by the extent.
+  /// The identity for a grid that is not loaded. Purely metadata, as the
+  /// world bounds are: nothing here applies the transform.
+  [[nodiscard]] const float4x4 &getIndexToWorld() const noexcept {
+    return indexToWorld_;
+  }
+
   /// Get the index of the voxel at the lower corner of the extent, i.e.,
   /// the minimum of the file's index-space bounding box. Voxel coordinate
   /// zero here is this index in the file. Zero for a format that does not
@@ -312,6 +325,9 @@ private:
 
   /// The index of the voxel at the lower corner of the extent.
   int3 indexOffset_{};
+
+  /// The transform from index space to world space.
+  float4x4 indexToWorld_{1.0f};
 
   /// The brick table, see `getBrickTable_()`. Immutable after load, so
   /// the data pointer is stable and may be baked into JIT-compiled

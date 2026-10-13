@@ -40,6 +40,13 @@ float2 applyGamma(const int gamma, const float2 texel) =
 float applyGamma(const int gamma, const float texel) =
   gamma == int(gamma_srgb) ? decodeSRGB(texel) : texel;
 
+/// The texel as a texture whose selector is `selector` reads it, after its
+/// gamma mode: as it is, or the one channel the selector selects as gray of
+/// alpha 1 (see `texture_2d` in `api.mdl`).
+@(pure macro)
+float4 applySelector(const int selector, const float4 texel) =
+  selector < 0 ? texel : float4(float3(texel[selector]), 1.0);
+
 @(pure macro)
 int getTileIndex(const texture_2d tex, const int2 uv_tile) {
   return -1 if (#any((uv_tile < 0) | (uv_tile >= tex.tile_count)));
@@ -136,6 +143,17 @@ export int depth_offset(
   const texture_3d tex, const float frame = 0.0 [[anno::unused()]]) =
   tex.offset.z;
 
+/// The transform from texel space, which is the index space of the file
+/// the texture was loaded from (see `width_offset()`), to object space. For
+/// NanoVDB, this is the grid's index-to-world map, which may rotate or
+/// shear. A Mitsuba `.vol` places its bounding box over the extent: texel
+/// zero is the lower corner of the box, and each voxel is the box divided
+/// by the extent. The identity for an invalid texture.
+@(pure macro)
+export float4x4 grid_to_object_space(
+  const texture_3d tex, const float frame = 0.0 [[anno::unused()]]) =
+  tex.grid_to_object;
+
 /// The first frame of an animated texture; see the module note, always zero.
 @(pure macro)
 export int first_frame(const texture_2d tex [[anno::unused()]]) = 0;
@@ -212,7 +230,9 @@ export float4 texel_float4(
   const int2 coord,
   const int2 uv_tile = int2(0),
   const float frame = 0.0 [[anno::unused()]]) {
-  return applyGamma(tex.gamma, #unpackFloat4(texelFetch(tex, coord, uv_tile)));
+  return applySelector(
+           tex.selector,
+           applyGamma(tex.gamma, #unpackFloat4(texelFetch(tex, coord, uv_tile))));
 }
 
 /// The texel at integer `coord` as `float3`, with gamma applied but no filtering or wrapping.
@@ -222,6 +242,7 @@ export float3 texel_float3(
   const int2 coord,
   const int2 uv_tile = int2(0),
   const float frame = 0.0 [[anno::unused()]]) {
+  return texel_float4(tex, coord, uv_tile).xyz if (tex.selector >= 0);
   return applyGamma(
            tex.gamma, #unpackFloat4(texelFetch(tex, coord, uv_tile)).xyz);
 }
@@ -233,6 +254,7 @@ export float2 texel_float2(
   const int2 coord,
   const int2 uv_tile = int2(0),
   const float frame = 0.0 [[anno::unused()]]) {
+  return texel_float4(tex, coord, uv_tile).xy if (tex.selector >= 0);
   return applyGamma(tex.gamma, #unpackFloat4(texelFetch(tex, coord, uv_tile)).xy);
 }
 
@@ -243,6 +265,7 @@ export float texel_float(
   const int2 coord,
   const int2 uv_tile = int2(0),
   const float frame = 0.0 [[anno::unused()]]) {
+  return texel_float4(tex, coord, uv_tile).x if (tex.selector >= 0);
   return applyGamma(tex.gamma, #unpackFloat4(texelFetch(tex, coord, uv_tile)).x);
 }
 
@@ -327,10 +350,13 @@ export float4 level_texel_float4(
   const int2 coord,
   const wrap_mode wrap_u = wrap_repeat,
   const wrap_mode wrap_v = wrap_repeat,
-  const int2 uv_tile = int2(0)) = applyGamma(
-  tex.gamma,
-  #unpackFloat4(levelTexelFetch(
-    tex, level, coord, int2(int(wrap_u), int(wrap_v)), uv_tile)));
+  const int2 uv_tile = int2(0)) =
+  applySelector(
+    tex.selector,
+    applyGamma(
+      tex.gamma,
+      #unpackFloat4(levelTexelFetch(
+        tex, level, coord, int2(int(wrap_u), int(wrap_v)), uv_tile))));
 
 /// The texel at integer `coord` of mip level `level` as `float`, see
 /// `level_texel_float4()`. NOTE: This is non-standard!
@@ -380,18 +406,21 @@ export float4 lookup_float4(
     // See 'texelFetch()': mirror once per row, then index within it.
     const int row0(tileExtent.x * (tileExtent.y - 1 - ic0.y));
     const int row1(tileExtent.x * (tileExtent.y - 1 - ic1.y));
-    return applyGamma(
-             tex.gamma,
-             math::lerp(
+    return applySelector(
+             tex.selector,
+             applyGamma(
+               tex.gamma,
                math::lerp(
-                 #unpackFloat4(tileBuffer[row0 + ic0.x]),
-                 #unpackFloat4(tileBuffer[row0 + ic1.x]),
-                 coord.x),
-               math::lerp(
-                 #unpackFloat4(tileBuffer[row1 + ic0.x]),
-                 #unpackFloat4(tileBuffer[row1 + ic1.x]),
-                 coord.x),
-               coord.y),
+                 math::lerp(
+                   #unpackFloat4(tileBuffer[row0 + ic0.x]),
+                   #unpackFloat4(tileBuffer[row0 + ic1.x]),
+                   coord.x),
+                 math::lerp(
+                   #unpackFloat4(tileBuffer[row1 + ic0.x]),
+                   #unpackFloat4(tileBuffer[row1 + ic1.x]),
+                   coord.x),
+                 coord.y),
+             ),
            );
   } else {
     // MDL specification:
@@ -419,18 +448,21 @@ export float4 lookup_float4(
     // crop corners above stay in v-up space, so cropping is unaffected.
     const int row0(tileExtent.x * (tileExtent.y - 1 - ic0.y));
     const int row1(tileExtent.x * (tileExtent.y - 1 - ic1.y));
-    return applyGamma(
-             tex.gamma,
-             math::lerp(
+    return applySelector(
+             tex.selector,
+             applyGamma(
+               tex.gamma,
                math::lerp(
-                 #unpackFloat4(tileBuffer[row0 + ic0.x]),
-                 #unpackFloat4(tileBuffer[row0 + ic1.x]),
-                 coord.x),
-               math::lerp(
-                 #unpackFloat4(tileBuffer[row1 + ic0.x]),
-                 #unpackFloat4(tileBuffer[row1 + ic1.x]),
-                 coord.x),
-               coord.y),
+                 math::lerp(
+                   #unpackFloat4(tileBuffer[row0 + ic0.x]),
+                   #unpackFloat4(tileBuffer[row0 + ic1.x]),
+                   coord.x),
+                 math::lerp(
+                   #unpackFloat4(tileBuffer[row1 + ic0.x]),
+                   #unpackFloat4(tileBuffer[row1 + ic1.x]),
+                   coord.x),
+                 coord.y),
+             ),
            );
   }
 }
