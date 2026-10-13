@@ -45,6 +45,22 @@
 #endif
 #endif
 
+// Clang has '__builtin_elementwise_sqrt' from version 18 and GCC does not
+// have it at all. Ask for the builtin rather than a version, since Apple
+// numbers its Clang releases its own way. The test is nested because a
+// compiler without '__has_builtin' cannot parse it in the same '#if'. As
+// above, predefine this to 0 to build the loop on a compiler with it.
+#ifndef SMDL_SIMD_ELEMENTWISE_SQRT
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_elementwise_sqrt)
+#define SMDL_SIMD_ELEMENTWISE_SQRT 1
+#endif
+#endif
+#endif
+#ifndef SMDL_SIMD_ELEMENTWISE_SQRT
+#define SMDL_SIMD_ELEMENTWISE_SQRT 0
+#endif
+
 namespace smdl::simd {
 
 #if SMDL_SIMD_VECTOR_EXTENSION
@@ -375,11 +391,12 @@ template <typename T, std::size_t N>
 template <typename T, std::size_t N>
 [[nodiscard]] inline Pack<T, N> sqrt(const Pack<T, N> &pack) noexcept {
   Pack<T, N> result;
-#if SMDL_SIMD_VECTOR_EXTENSION && defined(__clang__)
+#if SMDL_SIMD_VECTOR_EXTENSION && SMDL_SIMD_ELEMENTWISE_SQRT
   result.values = __builtin_elementwise_sqrt(pack.values);
 #else
-  // The loop is what GCC and the fallback get. With '-fno-math-errno',
-  // which this project sets, it vectorizes to the same instruction.
+  // The loop is what a compiler without the builtin and the fallback get.
+  // With '-fno-math-errno', which this project sets, it vectorizes to the
+  // same instruction.
   for (std::size_t i = 0; i < N; i++)
     result.values[i] = std::sqrt(pack.values[i]);
 #endif
