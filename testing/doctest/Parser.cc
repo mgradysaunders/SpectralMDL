@@ -317,6 +317,31 @@ exec {
   }
 }
 
+TEST_CASE("Parser: block comments nest") {
+  SUBCASE("A comment closes at the '*/' that balances its '/*'") {
+    ParsedModule parsed{"mdl 1.8;\n"
+                        "/* outer /* inner */ still the outer */\n"
+                        "export const int x = 1;\n"};
+    CHECK(parsed.root().globalDecls.size() == 1);
+  }
+  SUBCASE("A line comment inside a block comment hides nothing") {
+    ParsedModule parsed{"mdl 1.8;\n"
+                        "/* // */\n"
+                        "export const int x = 1;\n"};
+    CHECK(parsed.root().globalDecls.size() == 1);
+  }
+  SUBCASE("A comment left open by a nested one is unterminated") {
+    CHECK_CONTAINS(parseError("mdl 1.8;\n/* /* */\nexport const int x = 1;\n"),
+                   "Unterminated multiline comment");
+  }
+  SUBCASE("A borrowed keyword in a nested comment is not advice") {
+    std::string message{
+        parseError("#smdl\nexec { int i = 1 /* a /* b */ class */ 2; }\n")};
+    CHECK_CONTAINS(message, "but found");
+    CHECK_NOT_CONTAINS(message, "use 'struct'");
+  }
+}
+
 TEST_CASE("Parser: the token that stopped the parse") {
   SUBCASE("The token that stopped the parse is named") {
     std::string message{parseError("#smdl\nint i = 1\nint j = 2;\n")};

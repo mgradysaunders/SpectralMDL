@@ -4840,14 +4840,14 @@ export struct spot_edf: edf {
   /// this is accepted and ignored. The luminaire-as-a-whole interpretation
   /// is a host-side concern, e.g., a Dirac spot light.
   ///
-  void global_distribution = true;
+  $(?bool) global_distribution = none;
 
   /// The global frame.
   ///
   /// NOTE: Only the per-point tangent-space interpretation is supported, so
   /// this is accepted and ignored.
   ///
-  void global_frame = float3x3(1.0);
+  $(?float3x3) global_frame = none;
 
   /// The handle.
   $(?string) handle = none;
@@ -4976,14 +4976,14 @@ export struct measured_edf: edf {
   /// is a host-side concern, e.g., a Dirac point light driven directly by
   /// the C++ `smdl::LightProfile` API.
   ///
-  void global_distribution = true;
+  $(?bool) global_distribution = none;
 
   /// The global frame.
   ///
   /// NOTE: Only the per-point tangent-space interpretation is supported, so
   /// this is accepted and ignored.
   ///
-  void global_frame = float3x3(1.0);
+  $(?float3x3) global_frame = none;
 
   /// The tangent direction, orienting the horizontal angle of the profile.
   float3 tangent_u = $state.textureTangentU[0];

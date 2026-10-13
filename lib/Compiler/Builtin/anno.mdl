@@ -11,14 +11,18 @@ export annotation hard_range(auto min, auto max);
 /// The human-readable name to display instead of the identifier.
 export annotation display_name(string name);
 
-/// The group to organize the annotated item under in a user interface.
-export annotation in_group(string group);
+/// The group to organize the annotated item under in a user interface, and
+/// whether the group starts collapsed.
+export annotation in_group(string group, bool collapsed = false);
 
-/// The group and subgroup to organize the annotated item under in a user interface.
-export annotation in_group(string group, string subgroup);
+/// The group and subgroup to organize the annotated item under in a user
+/// interface, and whether the group starts collapsed.
+export annotation in_group(string group, string subgroup, bool collapsed = false);
 
-/// The group, subgroup, and sub-subgroup to organize the annotated item under in a user interface.
-export annotation in_group(string group, string subgroup, string subsubgroup);
+/// The group, subgroup, and sub-subgroup to organize the annotated item
+/// under in a user interface, and whether the group starts collapsed.
+export annotation in_group(
+  string group, string subgroup, string subsubgroup, bool collapsed = false);
 
 /// The relative position of the annotated item in a user interface.
 export annotation ui_order(int order);
@@ -74,3 +78,23 @@ export annotation usage(string hint = "");
 
 /// The qualified name of the entity the annotated item originates from.
 export annotation origin(string name = "");
+
+/// A hint that the annotated function or material may have a native
+/// implementation in the integration. Its MDL definition stays valid.
+export annotation native();
+
+/// A hint that the annotated function or material should not be inlined.
+export annotation noinline();
+
+/// How a compound value, such as a struct, corresponds to the ports of a
+/// node in a node graph.
+export enum node_port_mode {
+  node_port_value_only,      ///< One port for the whole value
+  node_port_fields_only,     ///< One port per field
+  node_port_value_and_fields ///< One port for the value and one per field
+};
+
+/// The default configuration of the output ports of a node created for the
+/// annotated function return type or struct type.
+export annotation node_output_port_default(
+  node_port_mode mode = node_port_value_only);

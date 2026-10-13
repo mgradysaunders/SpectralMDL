@@ -463,6 +463,10 @@ export struct texture_3d {
   /// The extent in voxels.
   const int3 extent = int3(0);
 
+  /// The index of the voxel at the lower corner of the extent in the file
+  /// it was loaded from, which places a NanoVDB grid in its index space.
+  const int3 offset = int3(0);
+
   /// The number of bricks per axis, i.e., the extent divided by the
   /// brick extent of 16 voxels per axis, rounded up.
   const int3 brick_count = int3(0);
@@ -564,6 +568,29 @@ export struct light_profile {
   /// The power.
   const float power = 0;
 };
+
+/// Whether two resources of one kind are the same, which is what `==` and
+/// `!=` ask of the texture types, light profiles, and BSDF measurements:
+/// the same loaded data, looked up the same way. Two invalid resources of
+/// one kind are the same. The compiler calls this only with two resources
+/// of one kind.
+///
+/// NOTE: Cube textures are not implemented, so every one is invalid, and
+/// two are the same exactly when their gamma modes are.
+@(pure macro)
+export bool _resourceEqual(const auto a, const auto b) {
+  if $(a <: texture_2d) {
+    return a.tile_table == b.tile_table && a.gamma == b.gamma;
+  } else if $(a <: texture_3d) {
+    return a.resource == b.resource && a.gamma == b.gamma;
+  } else if $(a <: texture_cube) {
+    return a.gamma == b.gamma;
+  } else if $(a <: texture_ptex) {
+    return a.ptr == b.ptr && a.gamma == b.gamma;
+  } else {
+    return a.ptr == b.ptr;
+  }
+}
 
 /// A resource of a kind the host defines, loaded by the loader the host
 /// registered under `kind` (see `smdl::Compiler::hostResourceLoaders`).

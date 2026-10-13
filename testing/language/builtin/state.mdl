@@ -95,3 +95,16 @@ unit_test "A dimension is stratified across the samples of a sequence" {
     #assert(mask == -1); // All thirty-two strata, once each.
   }
 }
+
+unit_test "The base wavelengths are the ones the state carries" {
+  const auto wavelengths = state::wavelength_base();
+  for (int i = 0; i < $WAVELENGTH_BASE_MAX; i++)
+    #assert(wavelengths[i] == $state.wavelengthBase[i]);
+}
+
+unit_test "A rounded corner normal is the shading normal" {
+  // Rounding needs the neighboring geometry, which only the renderer has,
+  // so the normal comes back unrounded whatever is asked of it.
+  #assert(#all(state::rounded_corner_normal() == state::normal()));
+  #assert(#all(state::rounded_corner_normal(0.1, true, 0.5) == state::normal()));
+}

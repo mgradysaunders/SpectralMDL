@@ -223,6 +223,12 @@ public:
     return worldBoundMax_;
   }
 
+  /// Get the index of the voxel at the lower corner of the extent, i.e.,
+  /// the minimum of the file's index-space bounding box. Voxel coordinate
+  /// zero here is this index in the file. Zero for a format that does not
+  /// place its grid in a larger index space, such as Mitsuba's `.vol`.
+  [[nodiscard]] int3 getIndexOffset() const noexcept { return indexOffset_; }
+
   /// Fetch the value at the given voxel coordinate, or the background
   /// value if the coordinate is outside the extent.
   [[nodiscard]] float fetch(int x, int y, int z) const noexcept;
@@ -303,6 +309,9 @@ private:
 
   /// The world-space bounding box maximum.
   float3 worldBoundMax_{};
+
+  /// The index of the voxel at the lower corner of the extent.
+  int3 indexOffset_{};
 
   /// The brick table, see `getBrickTable_()`. Immutable after load, so
   /// the data pointer is stable and may be baked into JIT-compiled

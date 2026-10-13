@@ -116,6 +116,26 @@ export int depth(
   const texture_3d tex, const float frame = 0.0 [[anno::unused()]]) =
   tex.extent.z;
 
+/// The index of the first voxel along x in the file the texture was loaded
+/// from, which is where a NanoVDB grid's index space places it. Zero for a
+/// format without an index space of its own, such as Mitsuba's `.vol`.
+@(pure macro)
+export int width_offset(
+  const texture_3d tex, const float frame = 0.0 [[anno::unused()]]) =
+  tex.offset.x;
+
+/// The index of the first voxel along y; see `width_offset()`.
+@(pure macro)
+export int height_offset(
+  const texture_3d tex, const float frame = 0.0 [[anno::unused()]]) =
+  tex.offset.y;
+
+/// The index of the first voxel along z; see `width_offset()`.
+@(pure macro)
+export int depth_offset(
+  const texture_3d tex, const float frame = 0.0 [[anno::unused()]]) =
+  tex.offset.z;
+
 /// The first frame of an animated texture; see the module note, always zero.
 @(pure macro)
 export int first_frame(const texture_2d tex [[anno::unused()]]) = 0;

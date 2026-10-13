@@ -2,6 +2,9 @@ mdl 1.8;
 
 import ::df::*;
 
+/* Block comments nest, /* so this one closes here */ and the outer one
+   goes on to its own close, and a // inside one starts nothing. */
+
 // A conformant module: no `#smdl` marker, so none of the dialect is
 // available here and the parser holds this file to the specification.
 // `modules.mdl` imports it to prove the conformant path still resolves.
@@ -14,3 +17,21 @@ export const int conformantAnswer = 42;
 export material conformantMaterial() = material(
   surface: material_surface(
     scattering: df::diffuse_reflection_bsdf(tint: color(0.5))));
+
+// A struct whose fields have no initializers. The specification default
+// constructs such a field when its argument is omitted, which the dialect
+// does not: there the argument is required, which is how a distribution
+// requires its parameters. The rule follows the module that declares the
+// struct, so this one constructs from nothing anywhere.
+export struct ConformantPoint {
+  float x;
+  int n;
+  color c;
+};
+
+export ConformantPoint conformantOrigin() = ConformantPoint();
+
+export int conformantDeclaredN() {
+  ConformantPoint p;
+  return p.n;
+}

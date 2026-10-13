@@ -102,3 +102,13 @@ unit_test "A conformant module resolves like any other" {
   // importing it differs.
   #assert(packages::conformant::conformantAnswer == 42);
 }
+
+unit_test "A conformant struct constructs the fields it gives no initializer" {
+  // See `packages/conformant.mdl`: what the specification asks of a field
+  // with no initializer holds for the struct declared there, whoever
+  // constructs it, including a declaration with no initializer of its own.
+  const auto p = packages::conformant::conformantOrigin();
+  #assert(p.x == 0.0 && p.n == 0 && #all(p.c == color(0.0)));
+  #assert(packages::conformant::ConformantPoint().n == 0);
+  #assert(packages::conformant::conformantDeclaredN() == 0);
+}

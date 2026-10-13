@@ -7,6 +7,7 @@
 #include "smdl/Module.h"
 #include "smdl/Support/QualifiedName.h"
 
+#include "BlockComment.h"
 #include "Compiler/BuiltinAccess.h"
 
 namespace smdl {
@@ -30,7 +31,10 @@ namespace {
     size_t j{src.find('\n', i + 2)};
     return j == std::string_view::npos ? src.size() : j;
   }
-  if (startsWith(remaining, "/*")) return skipPast("*/");
+  if (startsWith(remaining, "/*")) {
+    size_t length{blockCommentLength(remaining)};
+    return length == std::string_view::npos ? src.size() : i + length;
+  }
   if (startsWith(remaining, "[[")) return skipPast("]]");
   return i;
 }

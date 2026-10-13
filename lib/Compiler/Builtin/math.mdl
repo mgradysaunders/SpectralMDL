@@ -50,9 +50,15 @@ export auto floor(const auto a) = #floor(a);
 @(macro)
 export auto ceil(const auto a) = #ceil(a);
 
-/// The value rounded to the nearest integer.
+/// The value rounded to the nearest integer, with halfway cases rounded to
+/// the nearest even integer, as MDL 1.9 specifies.
 @(macro)
-export auto round(const auto a) = #round(a);
+export auto round(const auto a) = #roundEven(a);
+
+/// The value rounded to the nearest integer, with halfway cases rounded
+/// away from zero.
+@(macro)
+export auto round_away_from_zero(const auto a) = #round(a);
 
 /// The value rounded toward zero.
 @(macro)
@@ -195,7 +201,6 @@ export auto min_value(const auto a) = #minValue(a);
 export auto max_value(const auto a) = #maxValue(a);
 
 /// The wavelength in nanometers at which the color attains its smallest component.
-@(pure)
 export float min_value_wavelength(const color a) {
   int imin = 0;
   float amin = a[0];
@@ -209,7 +214,6 @@ export float min_value_wavelength(const color a) {
 }
 
 /// The wavelength in nanometers at which the color attains its largest component.
-@(pure)
 export float max_value_wavelength(const color a) {
   int imax = 0;
   float amax = a[0];

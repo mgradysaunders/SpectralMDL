@@ -6,6 +6,7 @@
 
 #include "smdl/AST.h"
 
+#include "BlockComment.h"
 #include "llvm.h"
 
 namespace smdl {
@@ -65,9 +66,9 @@ private:
                                                         : pos + 1);
     }
     if (inputSrc_.starts_with("/*")) {
-      size_t pos{inputSrc_.find("*/", 2)};
-      return consumeInput_(pos == llvm::StringRef::npos ? inputSrc_.size()
-                                                        : pos + 2);
+      size_t length{blockCommentLength(inputSrc_)};
+      return consumeInput_(length == std::string_view::npos ? inputSrc_.size()
+                                                            : length);
     }
     return {};
   }

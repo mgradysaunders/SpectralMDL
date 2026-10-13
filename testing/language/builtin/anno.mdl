@@ -1,0 +1,12 @@
+/// `::anno`: the standard annotations. They carry metadata for tools and
+/// do not affect compilation, so what a test can pin is what a module can
+/// name as a value: the node port modes of MDL 1.8.
+#smdl
+
+import ::anno::*;
+
+unit_test "The node port modes count up in the specification's order" {
+  #assert(int(anno::node_port_value_only) == 0);
+  #assert(int(anno::node_port_fields_only) == 1);
+  #assert(int(anno::node_port_value_and_fields) == 2);
+}

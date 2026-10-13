@@ -1685,6 +1685,27 @@ Value Emitter::emitOp(ast::BinaryOp op, Value lhs, Value rhs,
       return RValue(resultType, llvmResult);
     }
   }
+  // Resources: the texture types, light profiles, and BSDF measurements
+  // compare with `==` and `!=`, each only with its own kind
+  if (op == BINOP_CMP_EQ || op == BINOP_CMP_NE) {
+    auto resourceKindOf{[&](Type *type) -> StructType * {
+      auto structType{llvm::dyn_cast<StructType>(type)};
+      if (!structType) return nullptr;
+      StructType *kind{&structType->getInstanceOf()};
+      for (StructType *resourceType :
+           {context.getTexture2DType(), context.getTexture3DType(),
+            context.getTextureCubeType(), context.getTexturePtexType(),
+            context.getLightProfileType(), context.getBSDFMeasurementType()})
+        if (kind == resourceType) return kind;
+      return nullptr;
+    }};
+    if (StructType *kind{resourceKindOf(lhs.type)};
+        kind && kind == resourceKindOf(rhs.type)) {
+      Value isEqual{invoke("_resourceEqual", {lhs, rhs}, srcLoc)};
+      return op == BINOP_CMP_EQ ? isEqual
+                                : emitOp(UNOP_LOGIC_NOT, isEqual, srcLoc);
+    }
+  }
   // Complex numbers
   if (lhs.type->isComplex(context) || rhs.type->isComplex(context)) {
     // Promote both to `complex`
@@ -2936,6 +2957,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
   case IntrinsicID::Ceil:
   case IntrinsicID::Trunc:
   case IntrinsicID::Round:
+  case IntrinsicID::RoundEven:
   case IntrinsicID::Sin:
   case IntrinsicID::Cos:
   case IntrinsicID::Tan:
@@ -2955,6 +2977,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
             {IntrinsicID::Ceil, llvm::Intrinsic::ceil},
             {IntrinsicID::Trunc, llvm::Intrinsic::trunc},
             {IntrinsicID::Round, llvm::Intrinsic::round},
+            {IntrinsicID::RoundEven, llvm::Intrinsic::roundeven},
             {IntrinsicID::Sqrt, llvm::Intrinsic::sqrt},
             {IntrinsicID::Sin, llvm::Intrinsic::sin},
             {IntrinsicID::Cos, llvm::Intrinsic::cos},
@@ -3245,6 +3268,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
           return invoke(
               texture3DType,
               {Argument{"extent", context.getComptimeVector(extent)},
+               Argument{"offset", context.getComptimeVector(
+                                      voxelGrid.getIndexOffset())},
                Argument{"brick_count", context.getComptimeVector(brickCount)},
                Argument{"brick_table",
                         context.getComptimePtr(
@@ -3955,6 +3980,15 @@ Emitter::ResolvedArguments
 Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
                           const SourceLocation &srcLoc, bool shouldSkipEmit,
                           bool shouldPassAggregatesIndirectly) {
+  // A field with no initializer is default constructed when the argument
+  // for it is omitted, as the specification has it, if the struct is
+  // declared in a conformant module. In the dialect, the argument for such
+  // a field is required, which is how a distribution like 'spot_edf'
+  // requires its 'exponent'.
+  auto isDefaultConstructedIfOmitted{[](const Parameter &param) {
+    return param.astField && param.astField->name.srcLoc.module &&
+           !param.astField->name.srcLoc.module->isSMDLSyntax();
+  }};
   // Obvious case: If there are more arguments than parameters, resolution
   // fails.
   if (args.size() > params.size() && !params.isVariadic) {
@@ -4057,7 +4091,8 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
         paramType = inferredType->elemType;
         argType = arrayType->elemType;
       }
-    } else if (!param.getASTInitializer() && !param.builtinDefaultValue) {
+    } else if (!param.getASTInitializer() && !param.builtinDefaultValue &&
+               !isDefaultConstructedIfOmitted(param)) {
       srcLoc.throwError("Missing argument for parameter ",
                         SpellQuoted(param.name),
                         " without default initializer");
@@ -4097,9 +4132,11 @@ Emitter::resolveArguments(const ParameterList &params, const ArgumentList &args,
           if (ast::Expr * expr{param.getASTInitializer()}) {
             setCurrentModule(expr->srcLoc);
             value = emit(expr);
-          } else {
-            SMDL_SANITY_CHECK(param.builtinDefaultValue);
+          } else if (param.builtinDefaultValue) {
             value = *param.builtinDefaultValue;
+          } else {
+            SMDL_SANITY_CHECK(isDefaultConstructedIfOmitted(param));
+            value = invoke(param.type, {}, param.getSourceLocation());
           }
         }
         // Skip a same-type conversion, which is an identity that would

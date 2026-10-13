@@ -157,6 +157,12 @@ export const int X=-1;
     CHECK(entryNamed(mod, "g").signature == "export int g(int a, int b)");
     CHECK(entryNamed(mod, "X").signature == "export const int X = -1");
   }
+  SUBCASE("A nested comment in a signature is dropped whole") {
+    DocModule mod{extractFromSource(
+        "mdl 1.8;\n"
+        "export int f(int a /* outer /* inner */ outer */, int b) = a + b;\n")};
+    CHECK(entryNamed(mod, "f").signature == "export int f(int a, int b)");
+  }
   SUBCASE("Re-expansion leaves a compound operator alone") {
     // Only the `=` that introduces an initializer is spaced apart; a `=`
     // belonging to an operator inside the initializer expression is not.

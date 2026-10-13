@@ -19,6 +19,7 @@ target_sources(
     "Compiler/Emitter.cc"
     "Compiler/Resources.cc"
     "Doc.cc"
+    "Formatter.cc"
     "JIT.cc"
     "Manifold.cc"
     "Module.cc"

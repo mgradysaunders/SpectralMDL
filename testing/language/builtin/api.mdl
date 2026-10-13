@@ -3,10 +3,12 @@
 /// weigh a spectrum by. It is the piecewise Gaussian fit of CIE 1931 XYZ
 /// by Wyman, Sloan, and Shirley (2013), scaled by 0.01, and exactly so in
 /// the tails, where a truncated exponential series is several times too
-/// high.
+/// high. Also the comparison of the resource types it declares.
 #smdl
+#search_dir "../fixtures"
 
 import ::math::*;
+import ::tex::*;
 
 float lobe(
   const float w, const float center, const float below, const float above) {
@@ -50,4 +52,24 @@ unit_test "The binary search stays inside its table" {
   #assert(_polylineLerp(3, &xs[0], &xs[0], 650.0) == 600.0);
   #assert(_polylineLerp(3, &xs[0], &xs[0], 350.0) == 400.0);
   #assert(_polylineLerp(3, &xs[0], &xs[0], 450.0) == 450.0);
+}
+
+unit_test "A resource equals another of its kind that loads the same data alike" {
+  const auto t = texture_2d("4x4.png", tex::gamma_linear);
+  #assert(t == texture_2d("4x4.png", tex::gamma_linear));
+  #assert(!(t != texture_2d("4x4.png", tex::gamma_linear)));
+  // The gamma mode changes every lookup, so it tells two apart.
+  #assert(t != texture_2d("4x4.png", tex::gamma_srgb));
+  #assert(t != texture_2d());
+  #assert(texture_2d() == texture_2d());
+  #assert(texture_3d("linear_32x8x4.vol") == texture_3d("linear_32x8x4.vol"));
+  #assert(texture_3d("linear_32x8x4.vol") != texture_3d());
+  if $($HAS_NANOVDB) {
+    // Two grids out of one file are two resources.
+    #assert(texture_3d("blob.nvdb") != texture_3d("blob.nvdb", 0, "temperature"));
+  }
+  #assert(light_profile("isotropic.ies") == light_profile("isotropic.ies"));
+  #assert(light_profile("isotropic.ies") != light_profile("axial.ies"));
+  #assert(bsdf_measurement("test.mbsdf") == bsdf_measurement("test.mbsdf"));
+  #assert(bsdf_measurement("test.mbsdf") != bsdf_measurement());
 }

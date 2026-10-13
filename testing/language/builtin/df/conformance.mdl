@@ -1,6 +1,7 @@
 /// What `::df` owes a material written to the specification, beyond the
 /// behavior of its lobes: every elemental distribution accepts the
-/// specification's `handle`, which changes nothing, and a distribution
+/// specification's `handle`, and the spot and measured EDFs their global
+/// parameters, none of which changes anything here, and a distribution
 /// with every parameter at its default is a distribution like any other,
 /// not the absence of one.
 #smdl
@@ -64,4 +65,15 @@ unit_test "A distribution at its defaults is not the absence of one" {
   #assert(#isDefault(material_surface()));
   #assert(#isDefault(material_emission()));
   #assert(#isDefault(material_volume()));
+}
+
+unit_test "The spot and measured EDFs accept their global parameters" {
+  // `global_distribution` and `global_frame` place the emitter as a whole
+  // luminaire, which is the renderer's to do, so they are ignored here,
+  // but a material that passes them, by name or by position, is written
+  // to the specification and has to compile.
+  #assert(df::spot_edf(exponent: 2.0, global_distribution: true, global_frame: float3x3(1.0)) <: edf);
+  #assert(df::spot_edf(2.0, math::PI, false, float3x3(1.0)) <: edf);
+  #assert(df::measured_edf(profile: light_profile("isotropic.ies"), global_distribution: false) <: edf);
+  #assert(df::measured_edf(light_profile("isotropic.ies"), 1.0, true, float3x3(1.0)) <: edf);
 }

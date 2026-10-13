@@ -10,6 +10,8 @@
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/Error.h"
 
+#include "BlockComment.h"
+
 namespace smdl {
 
 //--{ Basics
@@ -139,9 +141,9 @@ void Parser::throwUnexpectedToken_(const SourceLocation &srcLoc,
       }
       if (src.compare(i, 2, "//") == 0) break;
       if (src.compare(i, 2, "/*") == 0) {
-        size_t close{src.find("*/", i + 2)};
-        if (close == std::string_view::npos) break;
-        i = close + 2;
+        size_t length{blockCommentLength(src.substr(i))};
+        if (length == std::string_view::npos) break;
+        i += length;
         continue;
       }
       std::string_view tokenInside{tokenAt_(i)};
@@ -236,11 +238,10 @@ void Parser::skip_() {
       return true;
     } else if (startsWith(getRemainingSourceCode_(), "/*")) {
       SourceLocation srcLocComment{srcLoc_};
-      next_(2);
-      while (!isEOF_() && !startsWith(getRemainingSourceCode_(), "*/"))
-        next_(1);
-      if (isEOF_()) srcLocComment.throwError("Unterminated multiline comment");
-      next_(2);
+      size_t length{blockCommentLength(getRemainingSourceCode_())};
+      if (length == std::string_view::npos)
+        srcLocComment.throwError("Unterminated multiline comment");
+      next_(length);
       pendingDocCommentBegin_ = pendingDocCommentEnd_ = 0;
       return true;
     } else if (isSpace(peek_())) {

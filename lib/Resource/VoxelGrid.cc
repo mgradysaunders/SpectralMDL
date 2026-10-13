@@ -44,6 +44,7 @@ struct FlatGrid final {
   float maxValue{0.0f};
   float3 worldBoundMin{};
   float3 worldBoundMax{};
+  int3 indexOffset{};
   std::vector<int32_t> brickTable{};
   std::vector<float> brickData{};
 };
@@ -134,6 +135,7 @@ tryFlattenNanoGrid(const nanovdb::GridHandle<nanovdb::HostBuffer> &handle,
   const auto bboxDim{bbox.dim()};
   initFlatGrid(flat, int3(bboxDim[0], bboxDim[1], bboxDim[2]),
                float(tree.root().background()));
+  flat.indexOffset = int3(bboxMin[0], bboxMin[1], bboxMin[2]);
   const auto &worldBBox{grid->worldBBox()};
   flat.worldBoundMin =
       float3(float(worldBBox.min()[0]), float(worldBBox.min()[1]),
@@ -538,6 +540,7 @@ void VoxelGrid::clear() noexcept {
   maxValue_ = 0.0f;
   worldBoundMin_ = float3();
   worldBoundMax_ = float3();
+  indexOffset_ = int3();
   majorantExtent_ = 1;
   majorantCount_ = int3();
   brickTable_.clear();
@@ -570,6 +573,7 @@ VoxelGrid::loadFromFile(const std::string &fileName,
     maxValue_ = flat.maxValue;
     worldBoundMin_ = flat.worldBoundMin;
     worldBoundMax_ = flat.worldBoundMax;
+    indexOffset_ = flat.indexOffset;
     brickTable_ = std::move(flat.brickTable);
     brickData_ = std::move(flat.brickData);
     // Compute the majorant grid over the cell voxels dilated by one on

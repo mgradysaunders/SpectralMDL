@@ -20,6 +20,15 @@ export float3 position() = $state.position;
 @(macro)
 export float3 normal() = $state.normal;
 
+/// The shading normal with the edges and corners of the geometry rounded
+/// over the given radius. NOTE: Rounding needs the neighboring geometry,
+/// which only the renderer has, so this returns `normal()` unrounded.
+@(macro)
+export float3 rounded_corner_normal(
+  const float radius = 0.0 [[anno::unused()]],
+  const bool across_materials = false [[anno::unused()]],
+  const float roundness = 1.0 [[anno::unused()]]) = normal();
+
 /// The true geometric surface normal.
 @(macro)
 export float3 geometry_normal() = $state.geometryNormal;
@@ -93,7 +102,8 @@ export float wavelength_max() = $state.wavelengthMax;
 
 /// The wavelengths in nanometers that spectral `color` values are sampled at.
 @(macro)
-export float[WAVELENGTH_BASE_MAX] wavelength_base() = $state.wavelengthBase;
+export float[WAVELENGTH_BASE_MAX] wavelength_base() =
+  float[WAVELENGTH_BASE_MAX]($state.wavelengthBase);
 
 /// The wavelength in nanometers the path is committed to: what a lens whose
 /// glasses disperse was traced at, and what to evaluate a wavelength-dependent

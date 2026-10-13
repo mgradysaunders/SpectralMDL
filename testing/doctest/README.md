@@ -143,7 +143,8 @@ On the library side `lib/Compiler/Type.cc` has no test at all, and nor do
 `lib/Compiler/Intrinsics.cc`, `lib/Support/Parallel.cc` and
 `lib/Support/Environment.cc`. The last reads every `SMDL_*` variable once
 per process, so a `ScopedEnv` in one case could not reliably reach it.
-`lib/Formatter.cc` has exactly one subcase, and it lives in `Module.cc`.
+`lib/Formatter.cc` has two subcases: one in `Formatter.cc`, and one, for
+`#search_dir`, in `Module.cc`.
 `lib/AST.cc` is reached only through `Parser.cc`'s `getDocCommentText`.
 
 Three `Resource/VoxelGrid.cc` subcases become silent no-ops with zero

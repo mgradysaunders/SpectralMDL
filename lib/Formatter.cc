@@ -56,19 +56,19 @@ bool Formatter::nextCommentForcesNewLine_() const {
       if (pos == inSrc.npos) break;
       inSrc = inSrc.drop_front(pos);
     } else if (inSrc.starts_with("/*")) {
-      size_t pos{inSrc.find("*/", 2)};
-      if (pos == inSrc.npos) break; // Shouldn't happen?
-      if (keepComment_(inSrc.take_front(pos + 2))) {
+      size_t length{blockCommentLength(inSrc)};
+      if (length == std::string_view::npos) break; // Shouldn't happen?
+      if (keepComment_(inSrc.take_front(length))) {
         if (ws.count('\n') > 0) {
           return true;
         }
-        inSrc = inSrc.drop_front(pos + 2);
+        inSrc = inSrc.drop_front(length);
         if (inSrc.take_while(isSpace).count('\n') > 0) {
           return true;
         }
       } else {
         // Step over the dropped multiline comment.
-        inSrc = inSrc.drop_front(pos + 2);
+        inSrc = inSrc.drop_front(length);
       }
     } else {
       break; // Shouldn't happen?

@@ -28,6 +28,10 @@ unit_test "A Mitsuba volume reads its voxels and filters exactly" {
   #assert(tex::width(t) == 32);
   #assert(tex::height(t) == 8);
   #assert(tex::depth(t) == 4);
+  // A Mitsuba volume has no index space of its own to sit in.
+  #assert(tex::width_offset(t) == 0);
+  #assert(tex::height_offset(t) == 0);
+  #assert(tex::depth_offset(t) == 0);
   #assert(#all(tex::extent(t) == int3(32, 8, 4)));
   #assert(tex::first_frame(t) == 0);
   #assert(tex::last_frame(t) == 0);
@@ -83,6 +87,10 @@ unit_test "A NanoVDB density grid reads its voxels" {
     const auto t = texture_3d("blob.nvdb");
     #assert(tex::texture_isvalid(t));
     #assert(#all(tex::extent(t) == int3(20, 16, 14)));
+    // The offsets are where the global index region begins.
+    #assert(tex::width_offset(t) == 3);
+    #assert(tex::height_offset(t) == -5);
+    #assert(tex::depth_offset(t) == 7);
     #assert(tex::min_value(t) == 0.0);
     #assert(tex::max_value(t) == 1.0);
     // Local voxel (x, y, z) has value '0.25 * ((x + y + z + 5) mod 5)'.
