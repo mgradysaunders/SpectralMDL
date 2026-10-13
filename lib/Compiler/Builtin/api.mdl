@@ -565,6 +565,25 @@ export struct light_profile {
   const float power = 0;
 };
 
+/// A resource of a kind the host defines, loaded by the loader the host
+/// registered under `kind` (see `smdl::Compiler::hostResourceLoaders`).
+/// NOTE: This is non-standard!
+///
+/// The three strings must be compile-time, and `name` is located like any
+/// other resource. A host wraps this in a type of its own, whose
+/// constructor, or a `@(macro)` function, passes the name through, and
+/// passes `ptr` to the `@(foreign)` functions that read the resource.
+export struct host_resource {
+  host_resource(const string kind, const string name, const string selector = "") =
+    #loadHostResource(kind, name, selector);
+
+  /// The resource the loader returned, or null if nothing loaded.
+  const &void ptr = none;
+
+  /// The flags the loader returned, or zero if nothing loaded.
+  const int flags = 0;
+};
+
 /// The spectral curve structure.
 export struct spectral_curve {
   spectral_curve(const string name) = #loadSpectralCurve(name);

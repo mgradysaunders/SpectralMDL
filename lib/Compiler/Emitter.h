@@ -1364,14 +1364,30 @@ public:
   /// remembers where they actually wrote the call.
   SourceLocation srcLocUserCall{};
 
-  /// The best location to blame for a resource diagnostic: `srcLoc` when it
-  /// is already in the user's own source, and otherwise the innermost call
-  /// site that is, so that a missing texture names the user's line instead
-  /// of the builtin constructor that happened to load it.
-  [[nodiscard]] const SourceLocation &
-  resourceSourceLocation(const SourceLocation &srcLoc) const {
+  /// The innermost call site in the module whose declarations are being
+  /// emitted, which is the module a resource name is located against (see
+  /// `Context::locate()`), however many wrappers in other modules the name
+  /// passed through on the way to the builtin that loads it.
+  SourceLocation srcLocAnchorCall{};
+
+  /// The best location to blame for a diagnostic raised inside a builtin
+  /// body: `srcLoc` when it is already in the user's own source, and
+  /// otherwise the innermost call site that is.
+  [[nodiscard]] SourceLocation
+  userSourceLocation(const SourceLocation &srcLoc) const {
     if (srcLoc.module && !srcLoc.module->isBuiltin()) return srcLoc;
     return srcLocUserCall ? srcLocUserCall : srcLoc;
+  }
+
+  /// The best location to blame for a resource that cannot be found or
+  /// loaded: the innermost call site in the module the name was located
+  /// against, so that a missing file names the line beside which it was
+  /// looked for rather than a wrapper elsewhere, and otherwise the same
+  /// location as `userSourceLocation()`.
+  [[nodiscard]] SourceLocation
+  resourceSourceLocation(const SourceLocation &srcLoc) const {
+    if (srcLoc.module && srcLoc.module == context.currentModule) return srcLoc;
+    return srcLocAnchorCall ? srcLocAnchorCall : userSourceLocation(srcLoc);
   }
 
   /// The `$state` value.

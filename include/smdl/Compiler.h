@@ -2,6 +2,7 @@
 #pragma once
 
 #include <memory>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -9,6 +10,7 @@
 #include "smdl/JIT.h"
 #include "smdl/Module.h"
 #include "smdl/Resource/BSDFMeasurement.h"
+#include "smdl/Resource/HostResource.h"
 #include "smdl/Resource/Image.h"
 #include "smdl/Resource/LightProfile.h"
 #include "smdl/Resource/Spectrum.h"
@@ -97,12 +99,13 @@ enum DumpFormat : int {
 ///   dangles. No thread may be executing JIT-compiled code during
 ///   `compile()` or `jitCompile()`.
 /// - JIT-compiled code embeds absolute pointers to host data owned by this
-///   `Compiler` (images, spectra, `sceneData`, ...). Every resource but an
-///   image is baked at emission; an image's texels are named by a symbol
-///   that `jitCompile()` defines, which is what lets the allocation wait
-///   until the level count is settled. Either way the `Compiler` must
-///   outlive all execution of its JIT-compiled code, and object files
-///   emitted by `dump()` are not relocatable into other processes.
+///   `Compiler` (images, spectra, host resources, `sceneData`, ...). Every
+///   resource but an image is baked at emission; an image's texels are
+///   named by a symbol that `jitCompile()` defines, which is what lets the
+///   allocation wait until the level count is settled. Either way the
+///   `Compiler` must outlive all execution of its JIT-compiled code, and
+///   object files emitted by `dump()` are not relocatable into other
+///   processes.
 class SMDL_EXPORT Compiler final {
 public:
   Compiler(uint32_t wavelengthBaseMax = 16);
@@ -387,6 +390,13 @@ private:
   loadSpectrumLibrary_(const std::string &fileName,
                        const SourceLocation &srcLoc);
 
+  /// Load host resource with the loader registered under `kind`. The
+  /// cache is keyed by `kind`, content hash, and `selector`.
+  [[nodiscard]] const HostResource &
+  loadHostResource_(const HostResourceLoader &loader, const std::string &kind,
+                    const std::string &fileName, const std::string &selector,
+                    const SourceLocation &srcLoc);
+
 public:
   /// Dump as LLVM-IR or native assembly into `out`. Must be called after
   /// `compile()` and before `jitCompile()`.
@@ -553,6 +563,16 @@ public:
   /// The scene data.
   SceneData sceneData{};
 
+  /// The loaders for the MDL `host_resource` type, by kind.
+  ///
+  /// `host_resource(kind, name, selector)` locates `name` the way every
+  /// resource is located and asks the loader registered under `kind` to
+  /// load it, so a host can define a resource type of its own that is
+  /// found, loaded once, and baked into compiled code as the builtin ones
+  /// are. A kind with no loader is a warning, once per kind per
+  /// `compile()`, and reads as null. See `HostResourceLoader`.
+  std::unordered_map<std::string, HostResourceLoader> hostResourceLoaders{};
+
   /// Enable the `scatterNormalEval`, `scatterNormalDraw`, and
   /// `geometryNormalEval` entry points?
   ///
@@ -654,6 +674,26 @@ private:
   /// The spectrum libraries.
   std::unordered_map<const MD5FileHash *, std::unique_ptr<SpectrumLibrary>>
       spectrumLibraries_;
+
+  /// The host resource key: the kind, the content hash, and the selector.
+  using HostResourceKey =
+      std::tuple<std::string, const MD5FileHash *, std::string>;
+
+  /// The hasher for the host resource key.
+  struct HostResourceKeyHash final {
+    [[nodiscard]] size_t operator()(const HostResourceKey &key) const noexcept {
+      size_t hash{std::hash<const MD5FileHash *>()(std::get<1>(key))};
+      for (const std::string *part : {&std::get<0>(key), &std::get<2>(key)})
+        hash ^= std::hash<std::string>()(*part) + 0x9E3779B97F4A7C15ULL +
+                (hash << 6) + (hash >> 2);
+      return hash;
+    }
+  };
+
+  /// The host resources, keyed as `loadHostResource_()` describes.
+  std::unordered_map<HostResourceKey, std::unique_ptr<HostResource>,
+                     HostResourceKeyHash>
+      hostResources_;
 
   /// The MDL modules by canonical file name, used to skip files that
   /// were already added.

@@ -279,6 +279,9 @@ public:
   /// Get the `light_profile` type.
   [[nodiscard]] StructType *getLightProfileType() { return lightProfileType_; }
 
+  /// Get the `host_resource` type.
+  [[nodiscard]] StructType *getHostResourceType() { return hostResourceType_; }
+
   /// Get the `spectral_curve` type.
   [[nodiscard]] StructType *getSpectralCurveType() {
     return spectralCurveType_;
@@ -650,6 +653,9 @@ private:
 
   /// The `light_profile` type defined by the builtin `API` module.
   StructType *lightProfileType_{};
+
+  /// The `host_resource` type defined by the builtin `API` module.
+  StructType *hostResourceType_{};
 
   /// The `spectral_curve` type defined by the builtin `API` module.
   StructType *spectralCurveType_{};

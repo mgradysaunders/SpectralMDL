@@ -136,6 +136,11 @@ describeResource(const SpectrumLibrary &spectrumLibrary) {
                 SpellByteSize(voxelGrid.getSizeInBytes()));
 }
 
+// What the host said it loaded, which may be nothing.
+[[nodiscard]] std::string describeResource(const HostResource &hostResource) {
+  return hostResource.description;
+}
+
 [[nodiscard]] std::string describeImage(const Image &image) {
   const int numLevels{image.getNumLevels()};
   return concat(image.getNumTexelsX(), " x ", image.getNumTexelsY(), ", ",
@@ -1173,6 +1178,7 @@ void Compiler::resetForRecompile_() {
   voxelGrids_.clear();
   spectrums_.clear();
   spectrumLibraries_.clear();
+  hostResources_.clear();
   builtinCalleeAddresses_.clear();
   rgbToColor_.func = nullptr;
   colorToRGB_.func = nullptr;
@@ -1387,7 +1393,8 @@ namespace {
 // possibly extended with load parameters (see `images_`). A load failure
 // is a warning, not an error: the resource stays default-constructed and
 // rendering continues. A load that succeeds says what it loaded at debug
-// level, naming `part` too if the file holds more than one thing to load.
+// level, naming `part` too if the file holds more than one thing to load
+// or is loaded as something in particular.
 template <typename K, typename T, typename Hash, typename Eq, typename Loader>
 T &loadResource(std::unordered_map<K, std::unique_ptr<T>, Hash, Eq> &resources,
                 const K &key, const SourceLocation &srcLoc,
@@ -1400,10 +1407,12 @@ T &loadResource(std::unordered_map<K, std::unique_ptr<T>, Hash, Eq> &resources,
             std::invoke(std::forward<Loader>(loader), *itr->second)}) {
       srcLoc.logWarn(error->message);
     } else if constexpr (!std::is_same_v<T, Image>) {
-      if (Logger::get().isEnabled(LOG_LEVEL_DEBUG))
+      if (Logger::get().isEnabled(LOG_LEVEL_DEBUG)) {
+        const std::string description{describeResource(*itr->second)};
         srcLoc.logDebug(concat("Loaded ", SpellFilePath(fileName),
-                               part.empty() ? "" : " ", part, ": ",
-                               describeResource(*itr->second)));
+                               part.empty() ? "" : " ", part,
+                               description.empty() ? "" : ": ", description));
+      }
     }
   }
   return *itr->second;
@@ -1576,6 +1585,33 @@ Compiler::loadSpectrumLibrary_(const std::string &fileName,
                                             fileName.c_str());
                         return spectrumLibrary.loadFromFile(fileName);
                       });
+}
+
+const HostResource &Compiler::loadHostResource_(
+    const HostResourceLoader &loader, const std::string &kind,
+    const std::string &fileName, const std::string &selector,
+    const SourceLocation &srcLoc) {
+  return loadResource(
+      hostResources_, HostResourceKey(kind, fileHasher_[fileName], selector),
+      srcLoc, fileName,
+      [&](HostResource &hostResource) -> std::optional<Error> {
+        SMDL_PROFILER_ENTRY("Compiler::loadHostResource_()", fileName.c_str());
+        std::optional<Error> error{};
+        if (std::optional<Error> thrown{catchAndReturnError([&] {
+              error = loader(HostResourceRequest{kind, fileName, selector},
+                             hostResource);
+            })})
+          error = std::move(thrown);
+        if (!error && !hostResource.ptr)
+          error = Error("the loader returned no resource");
+        if (!error) return std::nullopt;
+        hostResource = HostResource{};
+        return Error(concat("Cannot load ", SpellFilePath(fileName), " as ",
+                            SpellQuoted(kind), ": ", error->message));
+      },
+      concat("as ", SpellQuoted(kind),
+             selector.empty() ? std::string()
+                              : concat(", selector ", SpellQuoted(selector))));
 }
 
 std::optional<Error> Compiler::dump(DumpFormat dumpFormat,

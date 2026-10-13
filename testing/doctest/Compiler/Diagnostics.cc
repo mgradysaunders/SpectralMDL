@@ -529,6 +529,40 @@ TEST_CASE("Compiler: how a refusal is phrased") {
     CHECK_NOT_CONTAINS(warned.messages()[0], "<builtin");
     CHECK_CONTAINS(warned.messages()[0], "<string ::diag>:2:");
   }
+  SUBCASE("A missing resource named through a wrapper blames the caller") {
+    // The name is looked for beside the module being compiled, not beside
+    // the wrapper, so the caller's line is the one to blame.
+    TempDir tmpDir{"diagnostics-wrapper"};
+    tmpDir.write("lib/wrap.mdl", "#smdl\n@(macro)\n"
+                                 "export bsdf_measurement load(const string "
+                                 "name) =\n  bsdf_measurement(name);\n");
+    tmpDir.write("user/main.mdl",
+                 "#smdl\nimport ::lib::wrap::*;\n"
+                 "exec {\n"
+                 "  const auto m = ::lib::wrap::load(\"nope.mbsdf\");\n"
+                 "  #assert(!bool(m.ptr));\n"
+                 "}\n");
+    const CollectedLog warned{"nope.mbsdf"};
+    smdl::Compiler compiler{};
+    REQUIRE_OK(compiler.add(tmpDir.path().string()));
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE(warned.messages().size() == 1);
+    CHECK_CONTAINS(warned.messages()[0], "main.mdl:4:");
+    CHECK_NOT_CONTAINS(warned.messages()[0], "wrap.mdl");
+  }
+  SUBCASE("A resource name that is not compile-time blames where it went in") {
+    // A function parameter is a runtime value, so the name stops being
+    // compile-time on the line that passes it to the constructor.
+    smdl::Error error{compileError(
+        "#smdl\n@(pure)\n"
+        "bsdf_measurement load(const string name) = bsdf_measurement(name);\n"
+        "exec { const auto m = load(\"x.mbsdf\"); }\n")};
+    CHECK_CONTAINS(error.message, "[<string ::diag>:3:");
+    CHECK_CONTAINS(error.message,
+                   "expects 1 compile-time string argument; a name passed "
+                   "through a function is compile-time only if the function "
+                   "is '@(macro)' or a struct constructor");
+  }
   SUBCASE("An unused value is reported in user code, never in builtin code") {
     const CollectedLog warned{"unused"};
     smdl::Compiler compiler{};

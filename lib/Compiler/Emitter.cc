@@ -3,6 +3,7 @@
 
 #include "BuiltinAccess.h"
 #include "smdl/Resource/BSDFMeasurement.h"
+#include "smdl/Resource/HostResource.h"
 #include "smdl/Support/Filesystem.h"
 #include "smdl/Support/Logger.h"
 #include "smdl/Support/Parallel.h"
@@ -2464,6 +2465,7 @@ Value Emitter::emitIntrinsic(IntrinsicID intrinsicID, const ArgumentList &args,
   case IntrinsicID::LoadTextureCube:
   case IntrinsicID::LoadTexturePtex:
   case IntrinsicID::LoadBSDFMeasurement:
+  case IntrinsicID::LoadHostResource:
   case IntrinsicID::LoadLightProfile:
   case IntrinsicID::LoadSpectralCurve:
     return emitIntrinsicLoad(intrinsicID, args, srcLoc);
@@ -2995,19 +2997,32 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
                                  const ArgumentList &args,
                                  const SourceLocation &srcLoc) {
   const std::string_view name{getIntrinsicName(intrinsicID)};
+  // A malformed call is blamed on the innermost call in user source, which
+  // is where the offending value entered the builtins. The likeliest one is
+  // a resource name passed through an ordinary function, whose parameter is
+  // a runtime value, so a runtime string says how to keep it compile-time.
+  auto throwBadArguments{[&](std::string_view expectation) {
+    bool hasRuntimeString{false};
+    for (const Argument &arg : args)
+      hasRuntimeString |=
+          arg.value.type->isString() && !arg.value.isComptimeString();
+    userSourceLocation(srcLoc).throwError(
+        "Intrinsic ", SpellQuoted(name), " expects ", expectation,
+        hasRuntimeString ? "; a name passed through a function is "
+                           "compile-time only if the function is "
+                           "'@(macro)' or a struct constructor"
+                         : "");
+  }};
   auto expectOneComptimeString{[&]() {
     if (!(args.size() == 1 && args[0].value.isComptimeString()))
-      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
-                        " expects 1 compile-time string argument");
+      throwBadArguments("1 compile-time string argument");
     return std::string(args[0].value.getComptimeString());
   }};
   auto expectOneComptimeStringAndOneInt{[&]() {
     if (!(args.size() == 2 &&                 //
           args[0].value.isComptimeString() && //
           args[1].value.type->isArithmeticScalarInt()))
-      srcLoc.throwError(
-          "Intrinsic ", SpellQuoted(name),
-          " expects 1 compile-time string argument and 1 int argument");
+      throwBadArguments("1 compile-time string argument and 1 int argument");
     return std::make_pair(std::string(args[0].value.getComptimeString()),
                           rvalue(args[1].value));
   }};
@@ -3020,9 +3035,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
           args[1].value.type->isArithmeticScalarInt() &&
           args[2].value.isComptimeInt() && //
           args[3].value.isComptimeInt()))
-      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
-                        " expects 1 compile-time string argument, 1 int "
-                        "argument, and 2 compile-time bool arguments");
+      throwBadArguments("1 compile-time string argument, 1 int argument, and "
+                        "2 compile-time bool arguments");
     return std::make_tuple(std::string(args[0].value.getComptimeString()),
                            rvalue(args[1].value),
                            args[2].value.getComptimeInt() != 0,
@@ -3213,9 +3227,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
           args[0].value.isComptimeString() && //
           args[1].value.type->isArithmeticScalarInt() &&
           args[2].value.isComptimeString()))
-      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
-                        " expects 1 compile-time string argument, 1 int "
-                        "argument, and 1 compile-time string argument");
+      throwBadArguments("1 compile-time string argument, 1 int argument, and "
+                        "1 compile-time string argument");
     std::string fileName{args[0].value.getComptimeString()};
     Value valueGammaAsInt{rvalue(args[1].value)};
     std::string gridName{args[2].value.getComptimeString()};
@@ -3315,6 +3328,42 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
               srcLoc);
         });
   }
+  case IntrinsicID::LoadHostResource: {
+    StructType *hostResourceType{context.getHostResourceType()};
+    if (!(args.size() == 3 &&                 //
+          args[0].value.isComptimeString() && //
+          args[1].value.isComptimeString() && //
+          args[2].value.isComptimeString()))
+      throwBadArguments("3 compile-time string arguments");
+    const std::string kind{args[0].value.getComptimeString()};
+    const std::string fileName{args[1].value.getComptimeString()};
+    const std::string selector{args[2].value.getComptimeString()};
+    // The loader is looked up before the file, so a kind no host defines is
+    // reported once for the kind rather than once for each file it names.
+    const auto &loaders{context.compiler.hostResourceLoaders};
+    const auto loader{loaders.find(kind)};
+    if (loader == loaders.end() || !loader->second) {
+      context.compiler.logResourceWarningOnce_(
+          resourceSourceLocation(srcLoc), concat("\n", kind),
+          concat("Cannot load ", SpellQuoted(fileName),
+                 ": no loader is registered for host resource kind ",
+                 SpellQuoted(kind)));
+      return invoke(hostResourceType, {}, srcLoc);
+    }
+    return withLocatedFile(
+        fileName, hostResourceType, [&](const std::string &resolvedFileName) {
+          const HostResource &hostResource{context.compiler.loadHostResource_(
+              loader->second, kind, resolvedFileName, selector,
+              resourceSourceLocation(srcLoc))};
+          return invoke(
+              hostResourceType,
+              {Argument{"ptr",
+                        context.getComptimePtr(context.getVoidPointerType(),
+                                               hostResource.ptr.get())},
+               Argument{"flags", context.getComptimeInt(hostResource.flags)}},
+              srcLoc);
+        });
+  }
   case IntrinsicID::LoadLightProfile: {
     StructType *lightProfileType{context.getLightProfileType()};
     std::string fileName{expectOneComptimeString()};
@@ -3350,21 +3399,16 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
   case IntrinsicID::LoadSpectralCurve: {
     StructType *spectralCurveType{context.getSpectralCurveType()};
     if (args.size() == 1) {
-      if (!args[0].value.isComptimeString()) {
-        srcLoc.throwError("Intrinsic ", SpellQuoted(name),
-                          " expects 1 compile-time string argument");
-      }
+      if (!args[0].value.isComptimeString())
+        throwBadArguments("1 compile-time string argument");
     } else if (args.size() == 2) {
       if (!(args[0].value.isComptimeString() &&
             (args[1].value.isComptimeString() ||
-             args[1].value.isComptimeInt()))) {
-        srcLoc.throwError("Intrinsic ", SpellQuoted(name),
-                          " expects 1 compile-time string argument and 1 "
-                          "compile-time string or int argument");
-      }
+             args[1].value.isComptimeInt())))
+        throwBadArguments("1 compile-time string argument and 1 compile-time "
+                          "string or int argument");
     } else {
-      srcLoc.throwError("Intrinsic ", SpellQuoted(name),
-                        " expects 1 or 2 arguments");
+      throwBadArguments("1 or 2 arguments");
     }
     std::string fileName{args[0].value.getComptimeString()};
     return withLocatedFile(
@@ -3464,8 +3508,10 @@ Value Emitter::emitCall(Value callee, const ArgumentList &args,
                         const SourceLocation &srcLoc) {
   // Anything emitted inside this call can blame the user's line for a
   // resource it cannot find, however deep into the builtins it goes.
-  SMDL_PRESERVE(srcLocUserCall);
+  SMDL_PRESERVE(srcLocUserCall, srcLocAnchorCall);
   if (srcLoc.module && !srcLoc.module->isBuiltin()) srcLocUserCall = srcLoc;
+  if (srcLoc.module && srcLoc.module == context.currentModule)
+    srcLocAnchorCall = srcLoc;
   if (args.isAnyVisited()) {
     size_t visitedIndex{args.indexOfFirstVisited()};
     return emitVisit(args[visitedIndex].value, srcLoc, [&](Value value) {

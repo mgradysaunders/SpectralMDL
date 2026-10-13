@@ -3,8 +3,8 @@
 /// raises and how often, what an image that is found and does not load
 /// reads as, the curve a spectrum library does not have, what each says
 /// in the log and in what order, the mip chain a texture bakes, the
-/// images an optimized module drops, and the one symbol per file the JIT
-/// defines.
+/// images an optimized module drops, the one symbol per file the JIT
+/// defines, and a resource of a kind the host defines and loads.
 ///
 /// This is `Compiler`'s own behavior rather than the readers' (those are
 /// tested under `Resource/`), so it sits beside the compiler it is about.
@@ -13,10 +13,16 @@
 
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
+#include <memory>
+#include <optional>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 #include "smdl/Compiler.h"
+#include "smdl/Resource/HostResource.h"
 #include "smdl/Resource/Image.h"
 
 TEST_CASE("Compiler: how often a missing resource is reported") {
@@ -477,5 +483,245 @@ TEST_CASE("Compiler: one image symbol per file") {
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE_OK(compiler.jitCompile());
     CHECK_OK(compiler.runExecs());
+  }
+}
+
+TEST_CASE("Compiler: a host resource") {
+  TempDir tmpDir{"host-resource"};
+  tmpDir.write("a.dat", "alpha\n");
+  tmpDir.write("copy/a.dat", "alpha\n");
+  tmpDir.write("b.dat", "beta\n");
+  // Every request the loader saw, and how many of the resources it made
+  // have been released. Each resource is an 'int' the unit tests read
+  // back, ten times the number of the request that made it.
+  struct Request final {
+    std::string kind{};
+    std::string fileName{};
+    std::string selector{};
+  };
+  std::vector<Request> requests{};
+  int numReleased{0};
+  const smdl::HostResourceLoader loader{
+      [&](const smdl::HostResourceRequest &request,
+          smdl::HostResource &resource) -> std::optional<smdl::Error> {
+        requests.push_back({std::string(request.kind),
+                            std::string(request.fileName),
+                            std::string(request.selector)});
+        resource.ptr = std::shared_ptr<int>(new int{10 * int(requests.size())},
+                                            [&](const int *value) {
+                                              delete value;
+                                              numReleased++;
+                                            });
+        resource.flags = 7;
+        resource.description = "a test resource";
+        return std::nullopt;
+      }};
+  // Add `paths`, build them with the loader registered under 'test::kind',
+  // and run their unit tests, returning the first message or the empty
+  // string.
+  auto build{[&](smdl::Compiler &compiler,
+                 const std::vector<std::filesystem::path> &paths) {
+    compiler.shouldEmitUnitTests = true;
+    compiler.hostResourceLoaders["test::kind"] = loader;
+    if (std::string message{buildAll(compiler, paths)}; !message.empty())
+      return message;
+    StateStorage storage{compiler};
+    smdl::State state{storage.makeState()};
+    if (std::optional<smdl::Error> error{compiler.runUnitTests(state)})
+      return error->message;
+    return std::string();
+  }};
+  SUBCASE("A file loads once however many references and paths reach it") {
+    // The material body is emitted several times over, and the copy is a
+    // different path to the same content.
+    tmpDir.write(
+        "main.mdl",
+        "#smdl\nimport ::df::*;\n"
+        "export material M() = let {\n"
+        "  auto r = host_resource(\"test::kind\", \"a.dat\");\n"
+        "} in material(surface: material_surface(\n"
+        "  scattering: df::diffuse_reflection_bsdf(tint: float(r.flags))));\n"
+        "unit_test \"The references\" {\n"
+        "  const auto r1 = host_resource(\"test::kind\", \"a.dat\");\n"
+        "  const auto r2 = host_resource(\"test::kind\", \"copy/a.dat\");\n"
+        "  #assert(r1.ptr == r2.ptr);\n"
+        "  #assert(*cast<&int>(r1.ptr) == 10);\n"
+        "  #assert(r1.flags == 7);\n"
+        "}\n");
+    smdl::Compiler compiler{};
+    CHECK(build(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(requests.size() == 1);
+    CHECK(requests[0].kind == "test::kind");
+    CHECK(requests[0].selector == "");
+  }
+  SUBCASE("The loader is asked for the file as every resource locates it") {
+    tmpDir.write("data/c.dat", "gamma\n");
+    tmpDir.write("main.mdl", "#smdl\n#search_dir \"data\"\n"
+                             "unit_test \"The reference\" {\n"
+                             "  #assert(bool(host_resource(\n"
+                             "    \"test::kind\", \"c.dat\", \"part\").ptr));\n"
+                             "}\n");
+    const CollectedLog logged{"c.dat", /*shouldCollectDebug=*/true};
+    smdl::Compiler compiler{};
+    CHECK(build(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(requests.size() == 1);
+    CHECK(std::filesystem::path(requests[0].fileName) ==
+          std::filesystem::canonical(tmpDir / "data/c.dat"));
+    CHECK(requests[0].selector == "part");
+    // What loaded is logged with the kind, the selector, and what the host
+    // said it was.
+    CHECK(logged.count("c.dat\" as \"test::kind\", selector \"part\": "
+                       "a test resource") == 1);
+  }
+  SUBCASE("A missing file warns once, is never asked for, and reads as null") {
+    tmpDir.write(
+        "main.mdl",
+        "#smdl\n"
+        "unit_test \"The references\" {\n"
+        "  const auto r1 = host_resource(\"test::kind\", \"no.dat\");\n"
+        "  const auto r2 = host_resource(\"test::kind\", \"no.dat\");\n"
+        "  #assert(!bool(r1.ptr) && r1.flags == 0);\n"
+        "  #assert(!bool(r2.ptr) && r2.flags == 0);\n"
+        "}\n");
+    const CollectedLog warnings{"no.dat"};
+    smdl::Compiler compiler{};
+    CHECK(build(compiler, {tmpDir / "main.mdl"}) == "");
+    CHECK(requests.empty());
+    CHECK(warnings.warningCount() == 1);
+  }
+  SUBCASE("A load that fails warns once with the reason and reads as null") {
+    tmpDir.write("error.dat", "error\n");
+    tmpDir.write("throw.dat", "throw\n");
+    tmpDir.write("null.dat", "null\n");
+    // Each file is named twice, by two unit tests.
+    const std::string unitTest{
+        "  const auto r1 = host_resource(\"test::fail\", \"error.dat\");\n"
+        "  const auto r2 = host_resource(\"test::fail\", \"throw.dat\");\n"
+        "  const auto r3 = host_resource(\"test::fail\", \"null.dat\");\n"
+        "  #assert(!bool(r1.ptr) && r1.flags == 0);\n"
+        "  #assert(!bool(r2.ptr) && r2.flags == 0);\n"
+        "  #assert(!bool(r3.ptr) && r3.flags == 0);\n"
+        "}\n"};
+    tmpDir.write("main.mdl",
+                 smdl::concat("#smdl\nunit_test \"First\" {\n", unitTest,
+                              "unit_test \"Second\" {\n", unitTest));
+    const CollectedLog warnings{"as \"test::fail\""};
+    smdl::Compiler compiler{};
+    // Each failure leaves flags behind, which must not survive it.
+    compiler.hostResourceLoaders["test::fail"] =
+        [](const smdl::HostResourceRequest &request,
+           smdl::HostResource &resource) -> std::optional<smdl::Error> {
+      resource.flags = 7;
+      const std::string fileName{
+          std::filesystem::path(request.fileName).filename().string()};
+      if (fileName == "error.dat") return smdl::Error("Bad magic");
+      if (fileName == "throw.dat") throw std::runtime_error("Out of cheese");
+      return std::nullopt;
+    };
+    CHECK(build(compiler, {tmpDir / "main.mdl"}) == "");
+    CHECK(warnings.warningCount() == 3);
+    CHECK(warnings.count("error.dat\" as \"test::fail\": Bad magic") == 1);
+    CHECK(warnings.count("throw.dat\" as \"test::fail\": ") == 1);
+    CHECK(warnings.count("Out of cheese") == 1);
+    CHECK(warnings.count("null.dat\" as \"test::fail\": the loader returned "
+                         "no resource") == 1);
+  }
+  SUBCASE("A kind with no loader warns once and reads as null") {
+    tmpDir.write("main.mdl",
+                 "#smdl\n"
+                 "unit_test \"The references\" {\n"
+                 "  const auto r1 = host_resource(\"test::none\", \"a.dat\");\n"
+                 "  const auto r2 = host_resource(\"test::none\", \"b.dat\");\n"
+                 "  const auto r3 = host_resource(\"test::null\", \"a.dat\");\n"
+                 "  #assert(!bool(r1.ptr) && !bool(r2.ptr) && !bool(r3.ptr));\n"
+                 "}\n");
+    const CollectedLog warnings{"no loader is registered"};
+    smdl::Compiler compiler{};
+    // A loader that holds nothing counts as none.
+    compiler.hostResourceLoaders["test::null"] = nullptr;
+    CHECK(build(compiler, {tmpDir / "main.mdl"}) == "");
+    CHECK(requests.empty());
+    CHECK(warnings.messages().size() == 2);
+    CHECK(warnings.count("host resource kind \"test::none\"") == 1);
+    CHECK(warnings.count("host resource kind \"test::null\"") == 1);
+  }
+  SUBCASE("Each kind and each selector loads separately") {
+    tmpDir.write(
+        "main.mdl",
+        "#smdl\n"
+        "unit_test \"The references\" {\n"
+        "  const auto r1 = host_resource(\"test::kind\", \"a.dat\");\n"
+        "  const auto r2 = host_resource(\"test::also\", \"a.dat\");\n"
+        "  const auto r3 = host_resource(\"test::kind\", \"a.dat\", \"x\");\n"
+        "  #assert(r1.ptr != r2.ptr && r1.ptr != r3.ptr && r2.ptr != r3.ptr);\n"
+        "}\n");
+    smdl::Compiler compiler{};
+    compiler.hostResourceLoaders["test::also"] = loader;
+    CHECK(build(compiler, {tmpDir / "main.mdl"}) == "");
+    CHECK(requests.size() == 3);
+  }
+  SUBCASE("A recompile loads again and releases what it loaded before") {
+    tmpDir.write(
+        "main.mdl",
+        "#smdl\n"
+        "unit_test \"The reference\" {\n"
+        "  #assert(bool(host_resource(\"test::kind\", \"a.dat\").ptr));\n"
+        "}\n");
+    {
+      smdl::Compiler compiler{};
+      CHECK(build(compiler, {tmpDir / "main.mdl"}) == "");
+      CHECK(requests.size() == 1);
+      CHECK(numReleased == 0);
+      REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+      CHECK(requests.size() == 2);
+      CHECK(numReleased == 1);
+    }
+    CHECK(numReleased == 2);
+  }
+  SUBCASE("A material left out of the compile loads nothing") {
+    tmpDir.write(
+        "main.mdl",
+        "#smdl\nimport ::df::*;\n"
+        "export material M() = let {\n"
+        "  auto r = host_resource(\"test::kind\", \"a.dat\");\n"
+        "} in material(surface: material_surface(\n"
+        "  scattering: df::diffuse_reflection_bsdf(tint: float(r.flags))));\n"
+        "export material N() = let {\n"
+        "  auto r = host_resource(\"test::kind\", \"b.dat\");\n"
+        "} in material(surface: material_surface(\n"
+        "  scattering: df::diffuse_reflection_bsdf(tint: float(r.flags))));\n");
+    smdl::Compiler compiler{};
+    compiler.setDesiredMaterials({"M"});
+    CHECK(build(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(requests.size() == 1);
+    CHECK(std::filesystem::path(requests[0].fileName).filename() == "a.dat");
+  }
+  SUBCASE("A wrapper in another module passes the name through") {
+    // The file is beside the caller, not beside the wrapper, and is found
+    // there, since a name is located against the module being compiled.
+    tmpDir.write("user/c.dat", "gamma\n");
+    tmpDir.write("host/wrap.mdl",
+                 "#smdl\n"
+                 "export struct wrapped {\n"
+                 "  wrapped(const string name) =\n"
+                 "    wrapped(resource: host_resource(\"test::kind\", name));\n"
+                 "  host_resource resource;\n"
+                 "};\n"
+                 "@(macro)\n"
+                 "export host_resource via_macro(const string name) =\n"
+                 "  host_resource(\"test::kind\", name, \"macro\");\n");
+    tmpDir.write(
+        "user/main.mdl",
+        "#smdl\nimport ::host::wrap::*;\n"
+        "unit_test \"The wrappers\" {\n"
+        "  #assert(bool(::host::wrap::wrapped(\"c.dat\").resource.ptr));\n"
+        "  #assert(bool(::host::wrap::via_macro(\"c.dat\").ptr));\n"
+        "}\n");
+    smdl::Compiler compiler{};
+    CHECK(build(compiler, {tmpDir.path()}) == "");
+    REQUIRE(requests.size() == 2);
+    for (const Request &request : requests)
+      CHECK(std::filesystem::path(request.fileName) ==
+            std::filesystem::canonical(tmpDir / "user/c.dat"));
   }
 }
