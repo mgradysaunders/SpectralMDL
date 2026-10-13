@@ -138,9 +138,11 @@ syn match mdlNumber display "\<0\o\%(['0-7]*\o\)\=\>"
 syn match mdlNumber display "\<\%(0\|[1-9]\%(['0-9]*\d\)\=\)\>"
 
 " Floating point literals, with the optional imaginary suffix `j` (an SMDL
-" extension) and the optional precision suffix `f`, `F`, `d`, or `D`. Note that
-" the parser requires a leading digit, so `.5` is *not* a literal.
+" extension) and the optional precision suffix `f`, `F`, `d`, or `D`. A literal
+" may begin with its decimal point, as `.5`, if a digit follows it; one that
+" follows a name, a digit, or a bracket would be no literal.
 syn match mdlFloat display "\<\d\%(['0-9]*\d\)\=\.\%(\d\%(['0-9]*\d\)\=\)\=\%([eE][-+]\=\d\%(['0-9]*\d\)\=\)\=j\=[dDfF]\=\w\@!"
+syn match mdlFloat display "\%(\w\|[.)\]]\)\@<!\.\d\%(['0-9]*\d\)\=\%([eE][-+]\=\d\%(['0-9]*\d\)\=\)\=j\=[dDfF]\=\w\@!"
 syn match mdlFloat display "\<\d\%(['0-9]*\d\)\=[eE][-+]\=\d\%(['0-9]*\d\)\=j\=[dDfF]\=\w\@!"
 syn match mdlFloat display "\<\d\%(['0-9]*\d\)\=\%(j[dDfF]\=\|[dDfF]\)\w\@!"
 "--}

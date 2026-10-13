@@ -978,7 +978,14 @@ auto Parser::parseLiteralStringExpression_() -> BumpPtr<ast::LiteralString> {
 
 auto Parser::parseLiteralNumberExpression_() -> BumpPtr<ast::Expr> {
   skip_();
-  if (!isDigit(peek_())) return nullptr;
+  // A floating point literal may begin with its decimal point, as in `.5`,
+  // so long as a digit follows it.
+  const bool isFractionFirst{[&] {
+    std::string_view remaining{getRemainingSourceCode_()};
+    return remaining.size() >= 2 && remaining[0] == '.' &&
+           isDigit(remaining[1]);
+  }()};
+  if (!isDigit(peek_()) && !isFractionFirst) return nullptr;
   SourceLocation srcLoc0{srcLoc_};
   auto parseDigits{[&](auto &&isDigit) {
     std::string digits{};
@@ -1036,7 +1043,7 @@ auto Parser::parseLiteralNumberExpression_() -> BumpPtr<ast::Expr> {
                                       value.getLimitedValue());
   } else {
     bool isInt{true};
-    std::string digits{parseDigits(isDigit)};
+    std::string digits{isFractionFirst ? "0" : parseDigits(isDigit)};
     if (next_(".")) {
       digits += '.';
       digits += parseDigits(isDigit);

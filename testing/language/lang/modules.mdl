@@ -101,6 +101,7 @@ unit_test "A conformant module resolves like any other" {
   // marker, so none of the dialect is available inside it. Nothing about
   // importing it differs.
   #assert(packages::conformant::conformantAnswer == 42);
+  #assert(packages::conformant::conformantHalf == 0.5);
 }
 
 unit_test "A conformant struct constructs the fields it gives no initializer" {

@@ -265,8 +265,9 @@ namespace {
     while (digits.size() > 1 && digits.back() == '0') digits.pop_back();
   }
   int numDigits{int(digits.size())};
-  // Spell it in fixed notation. Remember that the lexer requires a literal
-  // to begin with a digit, so `0.5` cannot shrink to `.5`.
+  // Spell it in fixed notation, keeping the leading digit. A literal may
+  // begin with its decimal point, but nothing that begins otherwise than
+  // with a digit is written (see below), so `0.5` stays `0.5`.
   std::string fixed{};
   if (exponent >= numDigits - 1) {
     fixed = digits;

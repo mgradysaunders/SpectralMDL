@@ -342,6 +342,29 @@ TEST_CASE("Parser: block comments nest") {
   }
 }
 
+TEST_CASE("Parser: a floating point literal") {
+  SUBCASE("A literal may begin with its decimal point") {
+    // The specification asks for a digit on one side of the point or the
+    // other, not before it. The spelling is kept as written, since the
+    // formatter writes it back.
+    ParsedModule parsed{"mdl 1.9;\nexport const float x = .5, y = .25e1d;\n"};
+    const ast::Variable &decl{parsed.declAs<ast::Variable>(0)};
+    REQUIRE(decl.declarators.size() == 2);
+    const ast::Expr *x{decl.declarators[0].exprInit.get()};
+    const ast::Expr *y{decl.declarators[1].exprInit.get()};
+    REQUIRE(ast::LiteralFloat::classof(x));
+    REQUIRE(ast::LiteralFloat::classof(y));
+    CHECK(static_cast<const ast::LiteralFloat *>(x)->srcValue == ".5");
+    CHECK(static_cast<const ast::LiteralFloat *>(x)->value == 0.5);
+    CHECK(static_cast<const ast::LiteralFloat *>(y)->srcValue == ".25e1d");
+    CHECK(static_cast<const ast::LiteralFloat *>(y)->value == 2.5);
+  }
+  SUBCASE("A decimal point with no digit after it begins no literal") {
+    CHECK_CONTAINS(parseError("mdl 1.9;\nexport const float x = .e5;\n"),
+                   "expected an initializer after '=', but found \".\"");
+  }
+}
+
 TEST_CASE("Parser: the token that stopped the parse") {
   SUBCASE("The token that stopped the parse is named") {
     std::string message{parseError("#smdl\nint i = 1\nint j = 2;\n")};

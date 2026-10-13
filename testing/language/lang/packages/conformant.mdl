@@ -11,6 +11,9 @@ import ::df::*;
 // `modules.mdl` imports it to prove the conformant path still resolves.
 export const int conformantAnswer = 42;
 
+// A floating point literal may begin with its decimal point.
+export const float conformantHalf = .5;
+
 // A material, so that the conformant path compiles everything a material
 // compiles into, the entry points the compiler generates on its own among
 // them. None of those may depend on the dialect, which the module that
