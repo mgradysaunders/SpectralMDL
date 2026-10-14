@@ -6,7 +6,7 @@
 /// Abstract-syntax-tree interfaces.
 namespace smdl::ast {
 
-/// \defgroup ast_decl Declarations
+/// \defgroup ast_decl Decl Subclasses
 /// \ingroup ast
 ///
 /// The `Decl` node subclasses, one per `DeclKind`: everything that may
@@ -16,7 +16,7 @@ namespace smdl::ast {
 /// \{
 /// \}
 
-/// \defgroup ast_expr Expressions
+/// \defgroup ast_expr Expr Subclasses
 /// \ingroup ast
 ///
 /// The `Expr` node subclasses, one per `ExprKind`, together with the
@@ -25,7 +25,7 @@ namespace smdl::ast {
 /// \{
 /// \}
 
-/// \defgroup ast_stmt Statements
+/// \defgroup ast_stmt Stmt Subclasses
 /// \ingroup ast
 ///
 /// The `Stmt` node subclasses, one per `StmtKind`.
@@ -84,6 +84,7 @@ public:
   const NodeKind nodeKind;
 };
 
+#if !SMDL_DOXYGEN
 /// The helper to define node subclasses that sets the `NodeKind` and
 /// implements `classof`.
 template <NodeKind K> class SMDL_EXPORT NodeSubclass : public Node {
@@ -93,6 +94,7 @@ public:
   /// The `classof` implementation for `llvm::isa` and `llvm::dyn_cast`.
   static bool classof(const Node *node) { return node->nodeKind == K; }
 };
+#endif // #if !SMDL_DOXYGEN
 
 /// Convert `NodeKind` to string.
 [[nodiscard]] SMDL_EXPORT std::string_view to_string(NodeKind nodeKind);
@@ -171,6 +173,7 @@ public:
   [[nodiscard]] bool isExported() const { return !srcKwExport.empty(); }
 };
 
+#if !SMDL_DOXYGEN
 /// The helper to define declaration subclasses that sets the `DeclKind` and
 /// implements `classof`.
 template <DeclKind K> class SMDL_EXPORT DeclSubclass : public Decl {
@@ -186,6 +189,7 @@ public:
            classof(static_cast<const Decl *>(node));
   }
 };
+#endif // #if !SMDL_DOXYGEN
 
 /// Convert `DeclKind` to string.
 [[nodiscard]] SMDL_EXPORT std::string_view to_string(DeclKind declKind);
@@ -222,6 +226,7 @@ public:
   const ExprKind exprKind;
 };
 
+#if !SMDL_DOXYGEN
 /// The helper to define expression subclasses that sets the `ExprKind` and
 /// implements `classof`.
 template <ExprKind K> class SMDL_EXPORT ExprSubclass : public Expr {
@@ -237,6 +242,7 @@ public:
            classof(static_cast<const Expr *>(node));
   }
 };
+#endif // #if !SMDL_DOXYGEN
 
 /// Convert `ExprKind` to string.
 [[nodiscard]] SMDL_EXPORT std::string_view to_string(ExprKind exprKind);
@@ -268,6 +274,7 @@ public:
   const StmtKind stmtKind;
 };
 
+#if !SMDL_DOXYGEN
 /// The helper to define statement subclasses that sets the `StmtKind` and
 /// implements `classof`.
 template <StmtKind K> class SMDL_EXPORT StmtSubclass : public Stmt {
@@ -283,6 +290,7 @@ public:
            classof(static_cast<const Stmt *>(node));
   }
 };
+#endif // #if !SMDL_DOXYGEN
 
 /// Convert `StmtKind` to string.
 [[nodiscard]] SMDL_EXPORT std::string_view to_string(StmtKind stmtKind);

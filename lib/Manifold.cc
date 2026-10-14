@@ -327,7 +327,7 @@ bool evaluateChain(const ManifoldSurfaces &surfaces, const double3 &receiver,
     // exactly when the segment pair obeys Snell's law.
     sv.hHat = etaPrev * sv.wPrev + etaNext * sv.wNext;
     if (!tryNormalize(sv.hHat, 1e-6, &sv.hLen)) return false;
-    // `h` points into the denser medium, so which side it lands on depends
+    // `hHat` points into the denser medium, so which side it lands on depends
     // on which side is denser. Orienting it onto the shading normal makes
     // it the microfacet normal the interface's own distribution is
     // expressed in, which is what an offset has to be measured against.
