@@ -38,8 +38,7 @@ constexpr float FLOAT_MAX = std::numeric_limits<float>::max();
 /// The largest `float` strictly less than 1, which is what a canonical
 /// random sample in `[0, 1)` and a texture or quadtree coordinate that
 /// must not land on the far edge clamp to.
-constexpr float ALMOST_ONE =
-    1.0f - std::numeric_limits<float>::epsilon() / 2;
+constexpr float ALMOST_ONE = 1.0f - std::numeric_limits<float>::epsilon() / 2;
 
 /// \name Functions (scalar math)
 /// \{
@@ -529,14 +528,40 @@ SMDL_ALWAYS_INLINE Vector<T, N> normalize(Vector<T, N> v) noexcept {
   return v * invLen;
 }
 
-// TODO Implement version with `T eps` tolerance to reject anything with length less-than or equal to `eps`?
 /// Try to normalize, return true if successful.
 template <typename T, size_t N>
 [[nodiscard]]
 SMDL_ALWAYS_INLINE bool tryNormalize(Vector<T, N> &v) noexcept {
   static_assert(std::is_floating_point_v<T>);
-  if (T len{length(v)}; len > T(0)) {
-    v = v * (T(1) / len);
+  using Limits = std::numeric_limits<T>;
+  constexpr T MIN_INVERTIBLE = Limits::min() / T(4) + Limits::denorm_min();
+  if (const T l{length(v)}; l >= MIN_INVERTIBLE && std::isfinite(l)) {
+    v = v * (T(1) / l);
+    return true;
+  } else {
+    return false;
+  }
+}
+
+/// Try to normalize, return true if successful.
+///
+/// \param[in,out] v    The vector to normalize.
+/// \param[in]     eps  The epsilon below which normalization is rejected.
+/// \param[out]    len  Receives the calculated length if non-null.
+///
+/// \note
+/// The vector `v` is only modified if the function returns true. The length
+/// `len` is populated, if non-null, regardless of whether the function returns
+/// true or false.
+template <typename T, size_t N>
+[[nodiscard]]
+SMDL_ALWAYS_INLINE bool tryNormalize(Vector<T, N> &v, T eps,
+                                     T *len = nullptr) noexcept {
+  static_assert(std::is_floating_point_v<T>);
+  const T l{length(v)};
+  if (len != nullptr) *len = l;
+  if (l > eps && std::isfinite(l)) {
+    v = v * (T(1) / l);
     return true;
   } else {
     return false;
