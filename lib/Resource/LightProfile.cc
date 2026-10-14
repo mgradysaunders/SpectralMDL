@@ -228,11 +228,7 @@ float atan2DegreesPositive(float y, float x) {
 } // namespace
 
 float LightProfile::interpolate(float3 wo) const noexcept {
-  wo = normalize(wo);
-  if (!std::isfinite(wo.x) || !std::isfinite(wo.y) || !std::isfinite(wo.z) ||
-      vertAngles.empty()) {
-    return 0;
-  }
+  if (!tryNormalize(wo) || vertAngles.empty()) return 0;
   if (photometryType == 1) {
     // > Type C photometry is normally used for architectural and
     // > roadway luminaires. The polar axis of the photometric web

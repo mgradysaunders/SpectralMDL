@@ -529,13 +529,26 @@ SMDL_ALWAYS_INLINE Vector<T, N> normalize(Vector<T, N> v) noexcept {
 }
 
 /// Try to normalize, return true if successful.
+///
+/// \param[in,out] v    The vector to normalize.
+/// \param[in]     eps  The length at or below which normalization is rejected.
+/// \param[out]    len  Receives the calculated length if non-null.
+///
+/// \note
+/// The vector `v` is only modified if the function returns true. The length
+/// `len` is populated, if non-null, regardless of whether the function returns
+/// true or false. A length that is not finite, or too small for its reciprocal
+/// to be, is rejected whatever `eps` is, so `eps` may be zero.
 template <typename T, size_t N>
 [[nodiscard]]
-SMDL_ALWAYS_INLINE bool tryNormalize(Vector<T, N> &v) noexcept {
+SMDL_ALWAYS_INLINE bool tryNormalize(Vector<T, N> &v, T eps,
+                                     T *len = nullptr) noexcept {
   static_assert(std::is_floating_point_v<T>);
   using Limits = std::numeric_limits<T>;
   constexpr T MIN_INVERTIBLE = Limits::min() / T(4) + Limits::denorm_min();
-  if (const T l{length(v)}; l >= MIN_INVERTIBLE && std::isfinite(l)) {
+  const T l{length(v)};
+  if (len != nullptr) *len = l;
+  if (l > eps && l >= MIN_INVERTIBLE && std::isfinite(l)) {
     v = v * (T(1) / l);
     return true;
   } else {
@@ -543,29 +556,12 @@ SMDL_ALWAYS_INLINE bool tryNormalize(Vector<T, N> &v) noexcept {
   }
 }
 
-/// Try to normalize, return true if successful.
-///
-/// \param[in,out] v    The vector to normalize.
-/// \param[in]     eps  The epsilon below which normalization is rejected.
-/// \param[out]    len  Receives the calculated length if non-null.
-///
-/// \note
-/// The vector `v` is only modified if the function returns true. The length
-/// `len` is populated, if non-null, regardless of whether the function returns
-/// true or false.
+/// Try to normalize, return true if successful. The same as
+/// `tryNormalize(v, T(0))`.
 template <typename T, size_t N>
 [[nodiscard]]
-SMDL_ALWAYS_INLINE bool tryNormalize(Vector<T, N> &v, T eps,
-                                     T *len = nullptr) noexcept {
-  static_assert(std::is_floating_point_v<T>);
-  const T l{length(v)};
-  if (len != nullptr) *len = l;
-  if (l > eps && std::isfinite(l)) {
-    v = v * (T(1) / l);
-    return true;
-  } else {
-    return false;
-  }
+SMDL_ALWAYS_INLINE bool tryNormalize(Vector<T, N> &v) noexcept {
+  return tryNormalize(v, T(0));
 }
 
 /// Vector cross product in 3 dimensions.

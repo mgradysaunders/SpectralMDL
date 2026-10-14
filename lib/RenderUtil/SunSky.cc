@@ -280,8 +280,7 @@ void viewGeometry(const float3 &dir, float &cosView, float &viewZenithDeg,
   viewZenithDeg =
       std::min(degrees(fastAcos(cosZ)), SunSky::VIEW_ZENITH_MAX_DEG);
   horz = float2(dir.x, dir.y);
-  const float len = length(horz);
-  horz = len > 1.0e-12f ? horz * (1.0f / len) : float2(1.0f, 0.0f);
+  if (!tryNormalize(horz, 1.0e-12f)) horz = float2(1.0f, 0.0f);
 }
 
 } // namespace
@@ -377,9 +376,7 @@ SunSky::SunSky(const SunSkyOptions &options) {
       std::clamp(degrees(std::acos(std::clamp(given.z, -1.0f, 1.0f))),
                  SUN_ZENITH_MIN_DEG, SUN_ZENITH_MAX_DEG)};
   sunDirHorz_ = float2(given.x, given.y);
-  const float lenHorz{length(sunDirHorz_)};
-  sunDirHorz_ =
-      lenHorz > 1.0e-12f ? sunDirHorz_ * (1.0f / lenHorz) : float2(1.0f, 0.0f);
+  if (!tryNormalize(sunDirHorz_, 1.0e-12f)) sunDirHorz_ = float2(1.0f, 0.0f);
   cosSunZenith_ = std::cos(radians(sunZenithDeg));
   sinSunZenith_ = std::sin(radians(sunZenithDeg));
   sunDir_ = float3(sunDirHorz_.x * sinSunZenith_, sunDirHorz_.y * sinSunZenith_,

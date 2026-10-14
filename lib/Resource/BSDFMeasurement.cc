@@ -187,9 +187,7 @@ namespace {
 } // namespace
 
 float3 BSDFMeasurement::interpolate(float3 wo, float3 wi) const noexcept {
-  wo = normalize(wo);
-  wi = normalize(wi);
-  if (!std::isfinite(wo.x + wo.y + wo.z + wi.x + wi.y + wi.z)) return {};
+  if (!tryNormalize(wo) || !tryNormalize(wi)) return {};
   return interpolate(std::acos(std::clamp(std::abs(wo.z), 0.0f, 1.0f)),
                      std::acos(std::clamp(std::abs(wi.z), 0.0f, 1.0f)),
                      azimuthDifference(wo, wi));
@@ -197,9 +195,7 @@ float3 BSDFMeasurement::interpolate(float3 wo, float3 wi) const noexcept {
 
 float BSDFMeasurement::directionPDF(float3 wo, float3 wi) const noexcept {
   if (distributions.empty()) return 0;
-  wo = normalize(wo);
-  wi = normalize(wi);
-  if (!std::isfinite(wo.x + wo.y + wo.z + wi.x + wi.y + wi.z)) return 0;
+  if (!tryNormalize(wo) || !tryNormalize(wi)) return 0;
   const float cosThetai{std::clamp(std::abs(wi.z), 0.0f, 1.0f)};
   const float sinThetai{std::sqrt(std::max(1.0f - cosThetai * cosThetai, //
                                            0.0f))};
@@ -226,8 +222,7 @@ float3 BSDFMeasurement::directionDraw(float2 xi, float3 wo,
                                       float *pdf) const noexcept {
   if (pdf) *pdf = 0;
   if (distributions.empty()) return {};
-  wo = normalize(wo);
-  if (!std::isfinite(wo.x + wo.y + wo.z)) return {};
+  if (!tryNormalize(wo)) return {};
   const int nTheta{int(numTheta)};
   const int nPhi{int(numPhi)};
   const float thetao{std::acos(std::clamp(std::abs(wo.z), 0.0f, 1.0f))};

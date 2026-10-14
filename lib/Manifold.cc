@@ -5,13 +5,26 @@
 
 namespace smdl {
 
+namespace {
+
+// The shortest projection of a tangent aim onto the tangent plane that
+// seeds a frame. `buildFrame()` refuses anything shorter, and so does
+// `ManifoldSurfaces::tangentSpaceOf()`, which promises the walk's frame.
+constexpr double MIN_SEED_LENGTH{1e-6};
+
+} // namespace
+
 ManifoldSurfaces::~ManifoldSurfaces() = default;
 
+// No `MIN_SEED_LENGTH` here: `dPdu` carries the scale of the
+// parameterization, which a fixed length cannot judge, and the unit
+// tangent returned clears it as an aim. The fallback is for a projection
+// with no direction at all, as in `gramSchmidtOrthonormalize()`.
 float3 ManifoldSurfaces::tangentOf(const ManifoldVertex &vertex) const {
   if (ManifoldGeometry geometry; eval(vertex, geometry)) {
     if (float3 tangent{geometry.dPdu -
                        dot(geometry.normal, geometry.dPdu) * geometry.normal};
-        tryNormalize(tangent)) { // TODO 1e-6 tolerance?
+        tryNormalize(tangent)) {
       return tangent;
     } else {
       return perpendicularTo(geometry.normal);
@@ -28,7 +41,7 @@ bool ManifoldSurfaces::tangentSpaceOf(const ManifoldVertex &vertex,
   if (ManifoldGeometry geometry; eval(vertex, geometry)) {
     normal = geometry.normal;
     if (float3 tangent{tangentAim - dot(normal, tangentAim) * normal};
-        tryNormalize(tangent)) { // TODO 1e-6 tolerance?
+        tryNormalize(tangent, float(MIN_SEED_LENGTH))) {
       tangentU = tangent;
       tangentV = cross(normal, tangent);
       return true;
@@ -207,10 +220,8 @@ double3 unitDirDeriv(const double3 &w, double invD, const double3 &dp) {
 [[nodiscard]] bool buildFrame(const double3 &normal, const double3 &tangentAim,
                               double3 &tangentU, double3 &tangentV,
                               double &seedLength) {
-  const double3 g{tangentAim - dot(normal, tangentAim) * normal};
-  seedLength = length(g);
-  if (!(seedLength > 1e-6)) return false;
-  tangentU = (1.0 / seedLength) * g;
+  tangentU = tangentAim - dot(normal, tangentAim) * normal;
+  if (!tryNormalize(tangentU, MIN_SEED_LENGTH, &seedLength)) return false;
   tangentV = cross(normal, tangentU);
   return true;
 }
@@ -300,30 +311,22 @@ bool evaluateChain(const ManifoldSurfaces &surfaces, const double3 &receiver,
     const double etaPrev{problem[i].etaPrev};
     const double etaNext{problem[i].etaNext};
     const double3 &point{vertices[i].point};
-    const double3 toPrev{(i == 0 ? receiver : vertices[i - 1].point) - point};
-    sv.distPrev = length(toPrev);
-    if (!(sv.distPrev > 1e-6)) return false;
-    sv.wPrev = (1.0 / sv.distPrev) * toPrev;
+    sv.wPrev = (i == 0 ? receiver : vertices[i - 1].point) - point;
+    if (!tryNormalize(sv.wPrev, 1e-6, &sv.distPrev)) return false;
     if (i + 1 < count) {
-      const double3 toNext{vertices[i + 1].point - point};
-      sv.distNext = length(toNext);
-      if (!(sv.distNext > 1e-6)) return false;
-      sv.wNext = (1.0 / sv.distNext) * toNext;
+      sv.wNext = vertices[i + 1].point - point;
+      if (!tryNormalize(sv.wNext, 1e-6, &sv.distNext)) return false;
     } else if (target.isInfinite) {
       sv.wNext = target.wl;
       sv.distNext = 0.0;
     } else {
-      const double3 toLight{target.point - point};
-      sv.distNext = length(toLight);
-      if (!(sv.distNext > 1e-6)) return false;
-      sv.wNext = (1.0 / sv.distNext) * toLight;
+      sv.wNext = target.point - point;
+      if (!tryNormalize(sv.wNext, 1e-6, &sv.distNext)) return false;
     }
     // The generalized half vector of refraction, parallel to the normal
     // exactly when the segment pair obeys Snell's law.
-    const double3 h{etaPrev * sv.wPrev + etaNext * sv.wNext};
-    sv.hLen = length(h);
-    if (!(sv.hLen > 1e-6)) return false;
-    sv.hHat = (1.0 / sv.hLen) * h;
+    sv.hHat = etaPrev * sv.wPrev + etaNext * sv.wNext;
+    if (!tryNormalize(sv.hHat, 1e-6, &sv.hLen)) return false;
     // `h` points into the denser medium, so which side it lands on depends
     // on which side is denser. Orienting it onto the shading normal makes
     // it the microfacet normal the interface's own distribution is

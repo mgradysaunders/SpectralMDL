@@ -768,8 +768,8 @@ public:
                              const double3 &origin, const double3 &target,
                              smdl::ManifoldVertex &moved) const override {
     double3 dir{target - origin};
-    const double distance{length(dir)};
-    if (!smdl::tryNormalize(dir)) return false;
+    double distance{};
+    if (!smdl::tryNormalize(dir, 0.0, &distance)) return false;
     int ball{};
     moved = {};
     if (!cast(origin, dir, std::min(1e-4, 0.25 * distance), ball,
