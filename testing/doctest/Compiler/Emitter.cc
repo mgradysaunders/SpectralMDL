@@ -304,6 +304,32 @@ TEST_CASE("Emitter: the byval threshold for an aggregate parameter") {
   }
 }
 
+TEST_CASE("Emitter: a rebuilt function keeps its attributes") {
+  // A function is rebuilt once its body is emitted when the body decides
+  // the return type or the return goes through 'sret', and the rebuilt
+  // function inherits no attributes of its own. Every call site still
+  // passes 'byval', and a definition without it reads its indirect
+  // parameters from whatever the argument register holds.
+  TempDir tmpDir{"rebuilt-function"};
+  const std::string ir{compileToIR(
+      tmpDir, "#smdl\n"
+              "@(pure noinline)\n"
+              "auto inferred(const float[24] w) = w[0];\n"
+              "@(pure noinline)\n"
+              "float[24] indirect(const float[24] w) = w;\n"
+              "@(pure visible)\n"
+              "export float use(const float x) =\n"
+              "  inferred(float[24]()) + indirect(float[24]())[0];\n")};
+  SUBCASE("An inferred return type") {
+    CHECK_CONTAINS(llvmParamsOf(ir, "inferred"), "byval([24 x float])");
+    CHECK_CONTAINS(llvmFnAttrsOf(ir, "inferred"), "mustprogress");
+  }
+  SUBCASE("An indirect return") {
+    CHECK_CONTAINS(llvmParamsOf(ir, "indirect"), "byval([24 x float])");
+    CHECK_CONTAINS(llvmFnAttrsOf(ir, "indirect"), "mustprogress");
+  }
+}
+
 TEST_CASE("Emitter: the error paths of an inline argument") {
   TempDir tmpDir{"inline-args"};
   // Compile a single module and return the first error message, or the

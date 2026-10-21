@@ -323,8 +323,10 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
       sretArg->setName("sret");
       migrateBodyAndArgs(llvmFunc0, llvmFunc, llvmFunc->arg_begin() + 1);
       addIndirectReturnAttrs(returnType, llvmFunc, nullptr);
-      // The rebuilt function does not inherit parameter attributes, and
-      // every index shifts by one for the leading 'sret' slot.
+      // The rebuilt function inherits no attributes, and every parameter
+      // index shifts by one for the leading 'sret' slot.
+      llvmFunc->addFnAttrs(llvm::AttrBuilder(
+          context.llvmContext, llvmFunc0->getAttributes().getFnAttrs()));
       for (auto [i, paramType] : indirectParams)
         addIndirectParamAttrs(paramType, i + 1, llvmFunc, nullptr);
       builder.CreateStore(rvalue(result), sretArg);
@@ -362,6 +364,10 @@ void Emitter::createFunction(llvm::Function *&llvmFunc, std::string_view name,
                                   llvmFunc->getFunctionType()->params(),
                                   params.isVariadic),
           llvm::Function::InternalLinkage, "", context.llvmModule);
+      // The parameters are unchanged, so every attribute carries over as it
+      // is. A definition without the 'byval' its call sites pass under reads
+      // its indirect parameters from whatever the argument register holds.
+      llvmFunc->copyAttributesFrom(llvmFunc0);
       migrateBodyAndArgs(llvmFunc0, llvmFunc, llvmFunc->arg_begin());
       llvmFunc0->replaceAllUsesWith(llvmFunc);
       llvmFunc0->eraseFromParent();

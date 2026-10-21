@@ -112,26 +112,45 @@ requireMaterial(smdl::Compiler &compiler, std::string_view name) {
   return ir;
 }
 
+/// The `define` line of the LLVM definition of `name`.
+[[nodiscard]] inline std::string llvmDefinitionOf(const std::string &ir,
+                                                  std::string_view name) {
+  const std::string marker{std::string("@") + std::string(name) + "("};
+  for (size_t i{ir.find("define")}; i != std::string::npos;
+       i = ir.find("define", i + 1)) {
+    std::string line{ir.substr(i, ir.find('\n', i) - i)};
+    if (line.find(marker) != std::string::npos) return line;
+  }
+  FAIL("no LLVM definition of " << name << " in:\n" << ir);
+  return {};
+}
+
 /// The parameter list of the LLVM definition of `name`, i.e. the text
 /// between the parentheses of its `define` line.
 [[nodiscard]] inline std::string llvmParamsOf(const std::string &ir,
                                               std::string_view name) {
   const std::string marker{std::string("@") + std::string(name) + "("};
-  size_t i{ir.find("define")};
-  while (i != std::string::npos) {
-    const size_t lineEnd{ir.find('\n', i)};
-    const std::string line{ir.substr(i, lineEnd - i)};
-    if (const size_t j{line.find(marker)}; j != std::string::npos) {
-      const size_t open{j + marker.size()};
-      const size_t close{line.rfind(')')};
-      REQUIRE(close != std::string::npos);
-      REQUIRE(close >= open);
-      return line.substr(open, close - open);
-    }
-    i = ir.find("define", i + 1);
-  }
-  FAIL("no LLVM definition of " << name << " in:\n" << ir);
-  return {};
+  const std::string line{llvmDefinitionOf(ir, name)};
+  const size_t open{line.find(marker) + marker.size()};
+  const size_t close{line.rfind(')')};
+  REQUIRE(close != std::string::npos);
+  REQUIRE(close >= open);
+  return line.substr(open, close - open);
+}
+
+/// The function attributes of the LLVM definition of `name`, i.e. the
+/// `attributes` line of the group its `define` line names, or the empty
+/// string if it names none.
+[[nodiscard]] inline std::string llvmFnAttrsOf(const std::string &ir,
+                                               std::string_view name) {
+  const std::string line{llvmDefinitionOf(ir, name)};
+  const size_t hash{line.find(" #", line.rfind(')'))};
+  if (hash == std::string::npos) return {};
+  const std::string group{
+      line.substr(hash + 1, line.find(' ', hash + 1) - (hash + 1))};
+  const size_t i{ir.find("\nattributes " + group + " = ")};
+  REQUIRE(i != std::string::npos);
+  return ir.substr(i + 1, ir.find('\n', i + 1) - (i + 1));
 }
 
 /// Count the image symbol declarations in an LLVM-IR dump. A declaration
