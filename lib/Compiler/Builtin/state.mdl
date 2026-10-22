@@ -62,12 +62,16 @@ export float3 texture_tangent_u(const int i) =
 export float3 texture_tangent_v(const int i) =
   isTextureSpace(i) ? $state.textureTangentV[i] : float3(0.0);
 
-/// The geometric tangent in the direction of increasing U in texture space `i`.
+/// A unit tangent orthogonal to the geometric normal, chosen by the renderer.
+/// It need not run along increasing U in texture space `i`;
+/// `texture_tangent_u(i)` does.
 @(macro)
 export float3 geometry_tangent_u(const int i) =
   isTextureSpace(i) ? $state.geometryTangentU[i] : float3(0.0);
 
-/// The geometric tangent in the direction of increasing V in texture space `i`.
+/// The unit tangent orthogonal to both `geometry_tangent_u(i)` and the
+/// geometric normal. It need not run along increasing V in texture space `i`;
+/// `texture_tangent_v(i)` does.
 @(macro)
 export float3 geometry_tangent_v(const int i) =
   isTextureSpace(i) ? $state.geometryTangentV[i] : float3(0.0);
