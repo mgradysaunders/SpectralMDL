@@ -6016,18 +6016,28 @@ factorScatterDraw(
 /// wasted samples where the shadow is deep. All-non-positive `slopes` are
 /// an exact passthrough of `base`, so an unpopulated LOD state, a
 /// faded-out relief, or downhill terrain shadows nothing.
+///
+/// The incoming direction is taken into `tangent_space` before it meets
+/// the slopes.
 export struct horizon_shadow_factor: bsdf {
-  /// The horizon slopes `tan(elevation)` toward +U, -U, +V, -V in the
-  /// natural tangent frame, in the same UV-commensurate units as the
-  /// parallax `scale` (normalized horizon maps multiply by the same
-  /// `scale` used for the march). Non-positive entries mean no horizon
-  /// in that direction.
+  /// The horizon slopes `tan(elevation)` toward +U, -U, +V, -V in
+  /// `tangent_space`, in the same UV-commensurate units as the parallax
+  /// `scale` (normalized horizon maps multiply by the same `scale` used
+  /// for the march). Non-positive entries mean no horizon in that
+  /// direction.
   float4 slopes = float4(0.0);
 
   /// The penumbra softness as a fraction of the horizon slope: the
   /// visibility ramps from 0 to 1 as the light elevation crosses
   /// `[(1 - softness) * horizon, horizon]`. 0 is a hard shadow edge.
   float softness = 0.25;
+
+  /// The frame the slopes are taken in, against the natural tangent
+  /// frame: texture space 0's tangents and the shading normal, as
+  /// `::extras::parallax::view_vector()` takes them. The natural frame's
+  /// X axis is the host's geometric tangent, which need not run along U.
+  float3x3 tangent_space =
+    float3x3($state.textureTangentU[0], $state.textureTangentV[0], $state.normal);
 
   /// The base BSDF.
   bsdf base = bsdf();
@@ -6040,9 +6050,9 @@ export struct horizon_shadow_factor: bsdf {
   }
 };
 
-/// The horizon visibility of the natural-tangent-frame direction `wi`
-/// against the four axis slopes: 1 at or above the interpolated horizon,
-/// 0 at or below its penumbra base, Hermite-smoothed between. The
+/// The horizon visibility of the direction `wi`, in the frame of the
+/// slopes, against the four axis slopes: 1 at or above the interpolated
+/// horizon, 0 at or below its penumbra base, Hermite-smoothed between. The
 /// interpolation weighs the quadrant's two axis slopes by the squared
 /// direction cosines, which is continuous across the axes because the
 /// switching term's weight vanishes at the switch.
@@ -6072,7 +6082,7 @@ auto scatterEval(
   auto result(scatterEvalMasked(visit &this.base, params));
   if (!result.isBlack && params.mode == scatter_reflect && !params.isImportance && !params.hitBackface) {
     return ScatterEvalResult(
-             f: horizonShadowTerm(this.slopes, this.softness, params.wi0) * result.f,
+             f: horizonShadowTerm(this.slopes, this.softness, params.wi0 * this.tangent_space) * result.f,
              pdf: result.pdf);
   } else {
     return result;
@@ -6100,9 +6110,9 @@ auto scatterDraw(
   auto result(scatterDrawMasked(visit &this.base, params));
   // Smooth lobes are shadowed on the evaluate path; only a sampled Dirac
   // carries its own `f` and must be shadowed here. The sampled `wi` is in
-  // the natural tangent frame, the frame the slopes live in.
+  // the natural tangent frame, as `params.wi0` is.
   if ((result.mode == scatter_reflect) & bool(result.fDirac) & !params.isImportance & !params.hitBackface) {
-    *result.fDirac *= horizonShadowTerm(this.slopes, this.softness, result.wi);
+    *result.fDirac *= horizonShadowTerm(this.slopes, this.softness, result.wi * this.tangent_space);
   }
   return result;
 }
@@ -6137,9 +6147,8 @@ auto scatterDraw(
 /// of `base`, so a forgotten `max_mipmap: true` reads as no shadowing
 /// rather than as wrong shadowing.
 ///
-/// The incoming direction is taken in the natural tangent frame, whose
-/// axes are texture space 0's tangents and the normal: the frame
-/// `parallax_uv()` marches in.
+/// The incoming direction is taken into `tangent_space`, the frame
+/// `parallax_uv()` marches in, before it is marched.
 export struct relief_shadow_factor: bsdf {
   /// The height texture, constructed with `max_mipmap: true`; heights
   /// follow the parallax convention, 1 at the un-displaced surface and 0
@@ -6174,6 +6183,13 @@ export struct relief_shadow_factor: bsdf {
   /// is the frame the light is tested in.
   float2 tilt = float2(0.0);
 
+  /// The frame the march runs in, against the natural tangent frame:
+  /// texture space 0's tangents and the shading normal, as
+  /// `::extras::parallax::view_vector()` takes them. The natural frame's
+  /// X axis is the host's geometric tangent, which need not run along U.
+  float3x3 tangent_space =
+    float3x3($state.textureTangentU[0], $state.textureTangentV[0], $state.normal);
+
   /// The base BSDF.
   bsdf base = bsdf();
 
@@ -6189,7 +6205,7 @@ float reliefShadowTerm(const &relief_shadow_factor this, const float3 wi) {
   return relief_visible(
            this.height,
            this.coord,
-           wi,
+           wi * this.tangent_space,
            this.scale,
            this.wrap_u,
            this.wrap_v,
@@ -6233,7 +6249,7 @@ auto scatterDraw(
   auto result(scatterDrawMasked(visit &this.base, params));
   // Smooth lobes are shadowed on the evaluate path; only a sampled Dirac
   // carries its own `f` and must be shadowed here. The sampled `wi` is in
-  // the natural tangent frame, the frame the march runs in.
+  // the natural tangent frame, as `params.wi0` is.
   if ((result.mode == scatter_reflect) & bool(result.fDirac) & !params.isImportance & !params.hitBackface) {
     *result.fDirac *= reliefShadowTerm(this, result.wi);
   }

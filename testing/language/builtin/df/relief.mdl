@@ -11,11 +11,13 @@ import scatter::*;
 
 // `df::relief_shadow_factor`: exact binary self-shadowing by a height
 // field's maximum mip chain, applied to the incoming direction inside the
-// BSDF, so NEE, BSDF sampling, and MIS stay consistent.
+// BSDF, so NEE, BSDF sampling, and MIS stay consistent. Also the frame
+// both it and `df::horizon_shadow_factor` take the light in.
 //
 // Evaluation goes through `::support::scatter`. The default test state
 // has an identity tangent frame, so the directions below read directly as
-// natural-tangent-frame vectors, with x along +U of the height field.
+// natural-tangent-frame vectors, with x along +U of the height field,
+// except where a test turns texture space 0 against that frame.
 // The field is the ridge fixture: height 0.2 everywhere except the
 // one-texel wall at x = 8 (height 1.0) of a 16x16 image, whose faces ramp
 // over one texel on either side.
@@ -202,4 +204,46 @@ unit_test "The factor agrees with relief_visible and only removes energy" {
   // The field is rough, so the sweep must see both outcomes.
   #assert(visibleCount > 0);
   #assert(visibleCount < 48);
+}
+
+// Texture space 0 turned 45 degrees against the natural frame, whose X
+// axis is the host's geometric tangent and need not run along U: a mesh
+// host may take it from a triangle's first edge.
+const float3 TURNED_U = float3(0.70710678, 0.70710678, 0.0);
+const float3 TURNED_V = float3(-0.70710678, 0.70710678, 0.0);
+
+// The natural-frame direction of `w`, given in the turned texture frame.
+@(pure macro)
+float3 fromTurned(const float3 w) = w.x * TURNED_U + w.y * TURNED_V + float3(0.0, 0.0, w.z);
+
+unit_test "The factors take the light along U and V when the geometric tangent is not U" {
+  preserve $state.textureTangentU, $state.textureTangentV;
+  $state.textureTangentU[0] = TURNED_U;
+  $state.textureTangentV[0] = TURNED_V;
+  const auto ridge =
+    texture_2d("ridge_16.png", tex::gamma_linear, max_mipmap: true);
+  const auto shadowed = df::relief_shadow_factor(
+    height: ridge, coord: ON_FLAT, scale: SCALE, base: BASE);
+  // Toward +U under the top of the wall. Taken in the natural frame it
+  // would run along U and V both, climbing past the wall in fewer texels.
+  const auto under = scatter::dirAt(float2(1.0, 0.0), 1.3);
+  #assert(!parallax::relief_visible(ridge, ON_FLAT, under, SCALE));
+  #assert(#all(scatter::evaluate(shadowed, WO(), fromTurned(under)).f == color(0.0)));
+  // Toward +U and -V, climbing past the wall along U; taken in the natural
+  // frame it would run along U alone, under the top of the wall.
+  const auto over = scatter::dirAt(float2(1.0, -1.0), 1.1);
+  #assert(parallax::relief_visible(ridge, ON_FLAT, over, SCALE));
+  const auto overBase = scatter::evaluate(BASE, WO(), fromTurned(over));
+  #assert(#any(overBase.f > 0.0));
+  #assert(#all(scatter::evaluate(shadowed, WO(), fromTurned(over)).f == overBase.f));
+  // A horizon toward +U alone: the same two directions, under it and over
+  // it, the second only once the light is taken along U and V.
+  const auto horizon = df::horizon_shadow_factor(
+    slopes: float4(2.0, 0.0, 0.0, 0.0), base: BASE);
+  const auto low = scatter::dirAt(float2(1.0, 0.0), 1.0);
+  #assert(#all(scatter::evaluate(horizon, WO(), fromTurned(low)).f == color(0.0)));
+  const auto high = scatter::dirAt(float2(1.0, -1.0), 1.2);
+  const auto highBase = scatter::evaluate(BASE, WO(), fromTurned(high));
+  #assert(#any(highBase.f > 0.0));
+  #assert(#all(scatter::evaluate(horizon, WO(), fromTurned(high)).f == highBase.f));
 }
