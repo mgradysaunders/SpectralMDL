@@ -1,0 +1,570 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "MDL",
+  "scopeName": "source.mdl",
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#annotation-block"
+    },
+    {
+      "include": "#attribute-block"
+    },
+    {
+      "include": "#intrinsics"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#unicode-identifier"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#declarations"
+    },
+    {
+      "include": "#version"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#named-argument"
+    },
+    {
+      "include": "#function"
+    },
+    {
+      "include": "#operators"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "include": "#doc-line-comment"
+        },
+        {
+          "include": "#line-comment"
+        },
+        {
+          "include": "#doc-block-comment"
+        },
+        {
+          "include": "#block-comment"
+        }
+      ]
+    },
+    "doc-line-comment": {
+      "name": "comment.line.triple-slash.documentation.mdl",
+      "begin": "///",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.comment.mdl"
+        }
+      },
+      "end": "$",
+      "patterns": [
+        {
+          "include": "#todo"
+        },
+        {
+          "include": "#doc-tag"
+        }
+      ]
+    },
+    "line-comment": {
+      "name": "comment.line.double-slash.mdl",
+      "begin": "//",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.comment.mdl"
+        }
+      },
+      "end": "$",
+      "patterns": [
+        {
+          "include": "#todo"
+        },
+        {
+          "include": "#format-directive"
+        }
+      ]
+    },
+    "doc-block-comment": {
+      "name": "comment.block.documentation.mdl",
+      "begin": "/\\*\\*(?!/)",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.comment.begin.mdl"
+        }
+      },
+      "end": "\\*/",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.comment.end.mdl"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#doc-block-comment-nest"
+        },
+        {
+          "include": "#todo"
+        },
+        {
+          "include": "#doc-tag"
+        }
+      ]
+    },
+    "doc-block-comment-nest": {
+      "begin": "/\\*",
+      "end": "\\*/",
+      "patterns": [
+        {
+          "include": "#doc-block-comment-nest"
+        },
+        {
+          "include": "#todo"
+        },
+        {
+          "include": "#doc-tag"
+        }
+      ]
+    },
+    "block-comment": {
+      "name": "comment.block.mdl",
+      "begin": "/\\*",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.comment.begin.mdl"
+        }
+      },
+      "end": "\\*/",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.comment.end.mdl"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#block-comment-nest"
+        },
+        {
+          "include": "#todo"
+        },
+        {
+          "include": "#format-directive"
+        }
+      ]
+    },
+    "block-comment-nest": {
+      "begin": "/\\*",
+      "end": "\\*/",
+      "patterns": [
+        {
+          "include": "#block-comment-nest"
+        },
+        {
+          "include": "#todo"
+        },
+        {
+          "include": "#format-directive"
+        }
+      ]
+    },
+    "todo": {
+      "name": "keyword.other.todo.mdl",
+      "match": "\\b(?:TODO|FIXME|XXX|HACK|NOTE|BUG)\\b"
+    },
+    "format-directive": {
+      "name": "keyword.control.directive.format.mdl",
+      "match": "\\bsmdl\\s+format\\s+(?:on|off)\\b"
+    },
+    "doc-tag": {
+      "name": "storage.type.class.doxygen.mdl",
+      "match": "[\\\\@][A-Za-z-]+"
+    },
+    "annotation-block": {
+      "name": "meta.annotation.mdl",
+      "begin": "\\[\\[",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.annotation.begin.mdl"
+        }
+      },
+      "end": "\\]\\]",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.annotation.end.mdl"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#strings"
+        },
+        {
+          "include": "#numbers"
+        },
+        {
+          "include": "#types"
+        },
+        {
+          "include": "#constants"
+        },
+        {
+          "include": "#named-argument"
+        },
+        {
+          "name": "entity.name.function.annotation.mdl",
+          "match": "(?:::\\s*)?[A-Za-z_]\\w*(?:\\s*::\\s*[A-Za-z_]\\w*)*(?=\\s*\\()"
+        },
+        {
+          "include": "#operators"
+        }
+      ]
+    },
+    "attribute-block": {
+      "name": "meta.attribute.smdl",
+      "begin": "@\\s*\\(",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.attribute.begin.smdl"
+        }
+      },
+      "end": "\\)|$",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.attribute.end.smdl"
+        }
+      },
+      "patterns": [
+        {
+          "name": "storage.modifier.attribute.smdl",
+          "match": "\\b(?:alwaysinline|cold|fastmath|foreign|hot|macro|noinline|open|optnone|optsize|pure|visible)\\b"
+        },
+        {
+          "name": "invalid.illegal.attribute.smdl",
+          "match": "[A-Za-z_]\\w*"
+        }
+      ]
+    },
+    "intrinsics": {
+      "patterns": [
+        {
+          "name": "keyword.control.directive.pragma.smdl",
+          "match": "#(?:smdl|search_dir)\\b"
+        },
+        {
+          "name": "support.function.intrinsic.smdl",
+          "match": "#[A-Za-z_]\\w*"
+        }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.mdl",
+      "begin": "\"",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.mdl"
+        }
+      },
+      "end": "\"|$",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.mdl"
+        }
+      },
+      "patterns": [
+        {
+          "include": "#string-escapes"
+        }
+      ]
+    },
+    "string-escapes": {
+      "patterns": [
+        {
+          "name": "constant.character.escape.mdl",
+          "match": "\\\\(?:[abfnrtv]|[0-7]{3}|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8})"
+        },
+        {
+          "name": "constant.character.escape.mdl",
+          "match": "\\\\[^0-7xuU\\n]"
+        },
+        {
+          "name": "invalid.illegal.escape.mdl",
+          "match": "\\\\[0-7xuU]"
+        }
+      ]
+    },
+    "unicode-identifier": {
+      "name": "entity.name.namespace.mdl",
+      "begin": "(?<![\\w'])'(?=[^'\\n]+')",
+      "end": "'",
+      "patterns": [
+        {
+          "include": "#string-escapes"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.mdl",
+          "match": "\\b\\d(?:['0-9]*\\d)?\\.(?:\\d(?:['0-9]*\\d)?)?(?:[eE][-+]?\\d(?:['0-9]*\\d)?)?j?[dDfF]?(?!\\w)"
+        },
+        {
+          "name": "constant.numeric.float.mdl",
+          "match": "(?<![\\w.)\\]])\\.\\d(?:['0-9]*\\d)?(?:[eE][-+]?\\d(?:['0-9]*\\d)?)?j?[dDfF]?(?!\\w)"
+        },
+        {
+          "name": "constant.numeric.float.mdl",
+          "match": "\\b\\d(?:['0-9]*\\d)?[eE][-+]?\\d(?:['0-9]*\\d)?j?[dDfF]?(?!\\w)"
+        },
+        {
+          "name": "constant.numeric.float.mdl",
+          "match": "\\b\\d(?:['0-9]*\\d)?(?:j[dDfF]?|[dDfF])(?!\\w)"
+        },
+        {
+          "name": "constant.numeric.integer.hexadecimal.mdl",
+          "match": "\\b0[xX][0-9A-Fa-f](?:['0-9A-Fa-f]*[0-9A-Fa-f])?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.binary.mdl",
+          "match": "\\b0[bB][01](?:['01]*[01])?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.octal.mdl",
+          "match": "\\b0[0-7](?:['0-7]*[0-7])?\\b"
+        },
+        {
+          "name": "constant.numeric.integer.decimal.mdl",
+          "match": "\\b(?:0|[1-9](?:['0-9]*\\d)?)\\b"
+        }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(struct|enum|struct_category)\\b(?:\\s+([A-Za-z_]\\w*))?",
+          "captures": {
+            "1": {
+              "name": "storage.type.mdl"
+            },
+            "2": {
+              "name": "entity.name.type.mdl"
+            }
+          }
+        },
+        {
+          "match": "\\b(annotation)\\b(?:\\s+([A-Za-z_]\\w*))?",
+          "captures": {
+            "1": {
+              "name": "storage.type.annotation.mdl"
+            },
+            "2": {
+              "name": "entity.name.function.annotation.mdl"
+            }
+          }
+        },
+        {
+          "match": "\\b(tag)\\b(?:\\s+([A-Za-z_]\\w*))?",
+          "captures": {
+            "1": {
+              "name": "storage.type.tag.smdl"
+            },
+            "2": {
+              "name": "entity.name.type.smdl"
+            }
+          }
+        },
+        {
+          "match": "\\b(namespace)\\b(?:\\s+([A-Za-z_]\\w*(?:\\s*::\\s*[A-Za-z_]\\w*)*))?",
+          "captures": {
+            "1": {
+              "name": "keyword.other.namespace.smdl"
+            },
+            "2": {
+              "name": "entity.name.namespace.smdl"
+            }
+          }
+        }
+      ]
+    },
+    "version": {
+      "match": "^\\s*(mdl)\\b(?=\\s+\\d)",
+      "captures": {
+        "1": {
+          "name": "keyword.other.version.mdl"
+        }
+      }
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.conditional.mdl",
+          "match": "\\b(?:if|else|switch|case|default)\\b"
+        },
+        {
+          "name": "keyword.control.loop.mdl",
+          "match": "\\b(?:for|while|do)\\b"
+        },
+        {
+          "name": "keyword.control.flow.mdl",
+          "match": "\\b(?:return|break|continue)\\b"
+        },
+        {
+          "name": "keyword.other.mdl",
+          "match": "\\b(?:let|in|cast|operator|declarative)\\b"
+        },
+        {
+          "name": "storage.modifier.mdl",
+          "match": "\\b(?:const|uniform|varying)\\b"
+        },
+        {
+          "name": "keyword.control.import.mdl",
+          "match": "\\b(?:module|import|using|export|package)\\b"
+        },
+        {
+          "name": "storage.type.typedef.mdl",
+          "match": "\\b(?:typedef)\\b"
+        },
+        {
+          "name": "keyword.control.flow.smdl",
+          "match": "\\b(?:return_from|unreachable|defer|preserve|visit|finalize)\\b"
+        },
+        {
+          "name": "storage.modifier.smdl",
+          "match": "\\b(?:static|inline)\\b"
+        },
+        {
+          "name": "keyword.other.smdl",
+          "match": "\\b(?:exec|unit_test)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "storage.type.primitive.mdl",
+          "match": "\\b(?:auto|void|string|color|(?:bool|int)[234]?|(?:float|double)(?:[234](?:x[234])?)?)\\b"
+        },
+        {
+          "name": "support.type.mdl",
+          "match": "\\b(?:material(?:_surface|_emission|_volume|_geometry)?|bsdf|edf|vdf|hair_bsdf|intensity_mode|texture_(?:2d|3d|cube|ptex)|bsdf_measurement|light_profile|spectral_curve|scatter_mode|coordinate_space|gamma_mode|wrap_mode)\\b"
+        },
+        {
+          "name": "support.type.smdl",
+          "match": "\\b(?:complex)\\b"
+        },
+        {
+          "name": "storage.type.primitive.smdl",
+          "match": "\\b(?:char|long|size_t|ptrdiff_t|intptr_t|intmax_t|int(?:8|16|32|64)_t)\\b"
+        },
+        {
+          "name": "meta.array.inferred-size.smdl",
+          "match": "\\[\\s*<\\s*([A-Za-z_]\\w*)\\s*>\\s*\\]",
+          "captures": {
+            "1": {
+              "name": "variable.parameter.size.smdl"
+            }
+          }
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.boolean.mdl",
+          "match": "\\b(?:true|false)\\b"
+        },
+        {
+          "name": "constant.language.none.smdl",
+          "match": "\\b(?:none)\\b"
+        },
+        {
+          "name": "support.constant.mdl",
+          "match": "\\b(?:PI|TWO_PI|HALF_PI|INT_MIN|INT_MAX|FLOAT_MIN|FLOAT_MAX|DOUBLE_MIN|DOUBLE_MAX|intensity_radiant_exitance|intensity_power|scatter_(?:none|reflect|transmit|reflect_transmit)|coordinate_(?:internal|object|world)|gamma_(?:default|linear|srgb)|wrap_(?:clamp|repeat|mirrored_repeat|clip))\\b"
+        },
+        {
+          "name": "variable.language.state.smdl",
+          "match": "\\$state\\b"
+        },
+        {
+          "name": "keyword.control.directive.comptime.smdl",
+          "match": "\\$(?=\\s*\\()"
+        },
+        {
+          "name": "constant.language.smdl",
+          "match": "\\$[A-Za-z_]\\w*"
+        }
+      ]
+    },
+    "named-argument": {
+      "patterns": [
+        {
+          "match": "(?<=[(,])\\s*([A-Za-z_]\\w*)\\s*(?=:(?![:=]))",
+          "captures": {
+            "1": {
+              "name": "variable.parameter.mdl"
+            }
+          }
+        },
+        {
+          "match": "^\\s*(?!default\\b)([A-Za-z_]\\w*)\\s*(?=:(?![:=]))",
+          "captures": {
+            "1": {
+              "name": "variable.parameter.mdl"
+            }
+          }
+        }
+      ]
+    },
+    "function": {
+      "name": "entity.name.function.mdl",
+      "match": "\\b[A-Za-z_]\\w*(?=\\s*\\()"
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.scope-resolution.mdl",
+          "match": "::"
+        },
+        {
+          "name": "keyword.operator.mdl",
+          "match": "\\.\\.\\."
+        },
+        {
+          "name": "punctuation.accessor.mdl",
+          "match": "\\."
+        },
+        {
+          "name": "punctuation.separator.delimiter.mdl",
+          "match": ","
+        },
+        {
+          "name": "punctuation.terminator.statement.mdl",
+          "match": ";"
+        },
+        {
+          "name": "keyword.operator.mdl",
+          "match": ">>>=|<<=|>>=|>>>|~==|~!=|&&|\\|\\||==|!=|<=|>=|<<|>>|\\+\\+|--|\\+=|-=|\\*=|/=|%=|&=|\\^=|\\|=|:=|<:|[-+*/%!~&^|<>?:=]"
+        }
+      ]
+    }
+  }
+}

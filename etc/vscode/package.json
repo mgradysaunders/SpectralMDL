@@ -1,0 +1,40 @@
+{
+  "name": "spectralmdl",
+  "displayName": "SpectralMDL",
+  "description": "Syntax highlighting for MDL and the SpectralMDL dialect.",
+  "version": "0.1.0",
+  "publisher": "mgradysaunders",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/mgradysaunders/SpectralMDL.git",
+    "directory": "etc/vscode"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "mdl",
+        "aliases": [
+          "MDL",
+          "mdl"
+        ],
+        "extensions": [
+          ".mdl"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "mdl",
+        "scopeName": "source.mdl",
+        "path": "./syntaxes/mdl.tmLanguage.json"
+      }
+    ]
+  }
+}
