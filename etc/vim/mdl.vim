@@ -242,28 +242,31 @@ syn match smdlComptime display "\$\ze\s*("
 
 "--{ Intrinsics
 " The generic match is defined first so that the recognized names defined after
-" it take priority.
+" it take priority. The recognized names are the spellings in
+" `lib/Compiler/Intrinsics.def`, and must be kept in step with it.
 syn match smdlIntrinsicUnknown display "#\h\w*"
-syn match smdlIntrinsic display "#\%(abs\|alignof\|all\|any\|assert\|atan2\|albedo_lut\)\>"
-syn match smdlIntrinsic display "#\%(bitcast\|bitreverse\|breakpoint\|bump\|bump_allocate\)\>"
-syn match smdlIntrinsic display "#\%(clock\|ctlz\|ctpop\|cttz\|conj\|imag\|norm\|real\)\>"
-syn match smdlIntrinsic display "#\%(floor\|ceil\|trunc\|round\|sqrt\|pow\|sign\|select\)\>"
-syn match smdlIntrinsic display "#\%(sin\|cos\|tan\|asin\|acos\|atan\|sinh\|cosh\|tanh\)\>"
+syn match smdlIntrinsic display "#\%(abs\|ceil\|floor\|round\|roundEven\|trunc\|sign\|sqrt\|pow\)\>"
+syn match smdlIntrinsic display "#\%(sin\|cos\|tan\|asin\|acos\|atan\|atan2\|sinh\|cosh\|tanh\)\>"
 syn match smdlIntrinsic display "#\%(exp\|exp2\|exp10\|log\|log2\|log10\)\>"
-syn match smdlIntrinsic display "#\%(sum\|prod\|min\|max\|min_value\|max_value\)\>"
-syn match smdlIntrinsic display "#\%(num\|num_rows\|num_cols\|sizeof\|transpose\)\>"
-syn match smdlIntrinsic display "#\%(heap_allocate\|heap_free\|memcpy\|memset\|isfpclass\|rotl\|rotr\)\>"
-syn match smdlIntrinsic display "#\%(print\|println\|fprint\|fprintln\|panic\)\>"
-syn match smdlIntrinsic display "#\%(typeof\|typename\|type_int\|type_float\|type_vector\|type_matrix\)\>"
-syn match smdlIntrinsic display "#\%(unpack_float4\|unsigned_to_fp\|tabulate_albedo\)\>"
-syn match smdlIntrinsic display "#is_\%(array\|enum\|pointer\|struct\|tag\|union\|void\|default\|optional_union\)\>"
-syn match smdlIntrinsic display "#is_arithmetic\%(_integral\|_floating_point\|_scalar\|_vector\|_matrix\)\=\>"
-syn match smdlIntrinsic display "#load_\%(texture_2d\|texture_3d\|texture_cube\|texture_ptex\)\>"
-syn match smdlIntrinsic display "#load_\%(bsdf_measurement\|light_profile\|spectral_curve\)\>"
+syn match smdlIntrinsic display "#\%(conj\|imag\|norm\|real\)\>"
+syn match smdlIntrinsic display "#\%(all\|any\|sum\|prod\|min\|max\|minValue\|maxValue\|select\)\>"
+syn match smdlIntrinsic display "#\%(num\|numRows\|numCols\|transpose\)\>"
+syn match smdlIntrinsic display "#\%(bitCast\|bitReverse\|ctlz\|ctpop\|cttz\|rotl\|rotr\)\>"
+syn match smdlIntrinsic display "#\%(testFPClass\|uitofp\|unpackFloat4\)\>"
+syn match smdlIntrinsic display "#\%(alignOf\|sizeOf\|bumpAllocate\|heapAllocate\|heapFree\|memcpy\|memset\)\>"
+syn match smdlIntrinsic display "#\%(assert\|breakpoint\|clock\|panic\|print\|println\|fprint\|fprintln\)\>"
+syn match smdlIntrinsic display "#\%(typeOf\|typeName\|hasField\)\>"
+syn match smdlIntrinsic display "#get\%(Int\|Float\|Vector\|Matrix\)Type\>"
+syn match smdlIntrinsic display "#is\%(Array\|Default\|Enum\|OptionalUnion\|Pointer\|Struct\|Tag\|Union\|Void\)\>"
+syn match smdlIntrinsic display "#isArithmetic\%(Integral\|FloatingPoint\|Scalar\|Vector\|Matrix\)\=\>"
+syn match smdlIntrinsic display "#load\%(Texture2D\|Texture3D\|TextureCube\|TexturePtex\)\>"
+syn match smdlIntrinsic display "#load\%(BSDFMeasurement\|LightProfile\|SpectralCurve\|HostResource\)\>"
+syn match smdlIntrinsic display "#\%(albedoLUT\|tabulateAlbedo\|bump\)\>"
 
 " The `#smdl` pragma opts a file into the SMDL syntax extensions. It must be
-" the very first token in the file.
-syn match smdlPragma display "#smdl\>"
+" the very first token in the file, and any `#search_dir` pragmas, which add
+" search directories, must immediately follow it.
+syn match smdlPragma display "#\%(smdl\|search_dir\)\>"
 "--}
 
 "--{ Annotations, attributes, named arguments
