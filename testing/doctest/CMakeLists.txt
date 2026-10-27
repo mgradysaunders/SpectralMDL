@@ -32,6 +32,8 @@ target_sources(
     "RenderUtil/Haze.cc"
     "RenderUtil/Illuminant.cc"
     "RenderUtil/MajorantWalk.cc"
+    "RenderUtil/MediumStack.cc"
+    "RenderUtil/MediumTracking.cc"
     "RenderUtil/MetalIOR.cc"
     "RenderUtil/MonteCarlo.cc"
     "RenderUtil/OpticalGlass.cc"
