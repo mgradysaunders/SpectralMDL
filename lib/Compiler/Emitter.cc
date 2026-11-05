@@ -3172,9 +3172,38 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
       message += concat("\n  and ", searchDirs.size() - MAX_LISTED, " more");
     resourceSourceLocation(srcLoc).logDebug(message);
   }};
+  auto recordReference{[&](const std::string &fileName,
+                           std::vector<std::string> resolvedFileNames) {
+    const ResourceKind kind{[&] {
+      switch (intrinsicID) {
+      case IntrinsicID::LoadTexture2D:
+        return RESOURCE_KIND_TEXTURE_2D;
+      case IntrinsicID::LoadTexture3D:
+        return RESOURCE_KIND_TEXTURE_3D;
+      case IntrinsicID::LoadTexturePtex:
+        return RESOURCE_KIND_TEXTURE_PTEX;
+      case IntrinsicID::LoadBSDFMeasurement:
+        return RESOURCE_KIND_BSDF_MEASUREMENT;
+      case IntrinsicID::LoadLightProfile:
+        return RESOURCE_KIND_LIGHT_PROFILE;
+      case IntrinsicID::LoadSpectralCurve:
+        return RESOURCE_KIND_SPECTRAL_CURVE;
+      case IntrinsicID::LoadHostResource:
+        return RESOURCE_KIND_HOST_RESOURCE;
+      default:
+        SMDL_SANITY_CHECK_MSG(false, "an intrinsic that locates no file");
+        return ResourceKind{};
+      }
+    }()};
+    context.recordResourceReference(kind, fileName,
+                                    std::move(resolvedFileNames));
+  }};
   auto withLocatedFile{[&](const std::string &fileName, Type *resultType,
                            auto &&buildFromFile) -> Value {
     std::optional<std::string> resolvedFileName{context.locate(fileName)};
+    recordReference(fileName, resolvedFileName
+                                  ? std::vector<std::string>{*resolvedFileName}
+                                  : std::vector<std::string>{});
     if (!resolvedFileName) {
       if (context.compiler.logResourceWarningOnce_(
               resourceSourceLocation(srcLoc), fileName,
@@ -3223,6 +3252,12 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
                                                : Image::MIP_MEAN};
     std::vector<FileLocator::ImagePath> resolvedImagePaths{
         context.locateImages(fileName)};
+    {
+      std::vector<std::string> resolvedFileNames{};
+      for (const auto &imagePath : resolvedImagePaths)
+        resolvedFileNames.push_back(imagePath.path);
+      recordReference(fileName, std::move(resolvedFileNames));
+    }
     if (resolvedImagePaths.empty()) {
       if (context.compiler.logResourceWarningOnce_(
               resourceSourceLocation(srcLoc), fileName,

@@ -1,6 +1,9 @@
 /// \file
 #pragma once
 
+#include <set>
+#include <utility>
+
 #include "Type.h"
 
 namespace smdl {
@@ -501,6 +504,13 @@ public:
         currentModule->getResourceAnchor(), currentModule->getSearchDirs());
   }
 
+  /// Record what `fileName` resolved to when located against the current
+  /// module, for `Compiler::getResourceReferences()`. Only the first of
+  /// several identical records is kept, since a material body is emitted
+  /// once for each function generated from it.
+  void recordResourceReference(ResourceKind kind, const std::string &fileName,
+                               std::vector<std::string> resolvedFileNames);
+
 public:
   /// The compiler.
   Compiler &compiler;
@@ -551,6 +561,11 @@ public:
   llvm::StringMap<llvm::SmallVector<TagType *, 1>> openFunctionTags{};
 
 private:
+  /// The kind and file name of each record `recordResourceReference()` has
+  /// kept, by module.
+  llvm::DenseMap<const Module *, std::set<std::pair<ResourceKind, std::string>>>
+      resourceReferenceKeys_;
+
   /// The builtin modules. See `get_builtin_module()`
   llvm::StringMap<BumpPtr<Module>> builtinModules_;
 

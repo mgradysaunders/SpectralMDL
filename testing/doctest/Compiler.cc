@@ -1167,3 +1167,67 @@ TEST_CASE("addFile: a module file under a package the host chooses") {
                 "[" + smdl::makePathCanonical(bad) + ":2:");
   }
 }
+
+TEST_CASE("getModules: every module the compiler holds") {
+  TempDir tmpDir{"get-modules"};
+  auto qualifiedNamesOf{[](const smdl::Compiler &compiler) {
+    std::vector<std::string> names{};
+    for (const smdl::Module *module : compiler.getModules())
+      names.emplace_back(module->getQualifiedName());
+    return names;
+  }};
+  SUBCASE("Each module is listed once, in the order it was added") {
+    const std::string first{
+        tmpDir
+            .write("a/first.mdl",
+                   "#smdl\nimport ::df::*;\n" + minimalMaterial("first_mat"))
+            .string()};
+    const std::string second{
+        tmpDir.write("b/second.mdl", "#smdl\nexport const int x = 1;\n")
+            .string()};
+    smdl::Compiler compiler{};
+    REQUIRE_OK(compiler.add(first));
+    REQUIRE_OK(compiler.addCode("::host", "#smdl\nexport const int y = 2;\n"));
+    REQUIRE_OK(compiler.addFile(second, "::pkg"));
+    REQUIRE_OK(compiler.add(first));
+    // The builtin '::df' that 'first' imports is not one of them.
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    CHECK(qualifiedNamesOf(compiler) ==
+          std::vector<std::string>{"::first", "::host", "::pkg::second"});
+  }
+  SUBCASE("A module a relative import loads is listed after compile") {
+    const std::string helper{
+        tmpDir.write("dir/helper.mdl", "#smdl\nexport const int marker = 1;\n")
+            .string()};
+    tmpDir.write("dir/main.mdl", "#smdl\nimport helper::marker;\n");
+    smdl::Compiler compiler{};
+    REQUIRE_OK(compiler.add((tmpDir / "dir" / "main.mdl").string()));
+    CHECK(qualifiedNamesOf(compiler) == std::vector<std::string>{"::main"});
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE(qualifiedNamesOf(compiler) ==
+            std::vector<std::string>{"::main", "::helper"});
+    CHECK(compiler.getModules()[1]->getFileName() ==
+          smdl::makePathCanonical(helper));
+  }
+  SUBCASE("A shadowed module is listed and says so") {
+    tmpDir.write("root1/util.mdl", "#smdl\nexport const int a = 1;\n");
+    tmpDir.write("root2/util.mdl", "#smdl\nexport const int b = 1;\n");
+    smdl::Compiler compiler{};
+    REQUIRE_OK(compiler.add((tmpDir / "root1").string()));
+    REQUIRE_OK(compiler.add((tmpDir / "root2").string()));
+    const std::vector<const smdl::Module *> modules{compiler.getModules()};
+    REQUIRE(modules.size() == 2);
+    CHECK(!modules[0]->isShadowed());
+    CHECK(modules[1]->isShadowed());
+  }
+  SUBCASE("The source code is still there after jitCompile") {
+    // What a host reads back to package the modules it compiled.
+    const std::string sourceCode{"#smdl\nimport ::df::*;\n" +
+                                 minimalMaterial("kept")};
+    const std::filesystem::path path{tmpDir.write("kept.mdl", sourceCode)};
+    smdl::Compiler compiler{};
+    REQUIRE(buildAll(compiler, {path}) == "");
+    REQUIRE(compiler.getModules().size() == 1);
+    CHECK(compiler.getModules()[0]->getSourceCode() == sourceCode);
+  }
+}

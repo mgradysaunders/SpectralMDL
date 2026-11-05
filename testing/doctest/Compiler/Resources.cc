@@ -5,7 +5,8 @@
 /// spectrum library does not have, what each says
 /// in the log and in what order, the mip chain a texture bakes, the
 /// images an optimized module drops, the one symbol per file the JIT
-/// defines, and a resource of a kind the host defines and loads.
+/// defines, a resource of a kind the host defines and loads, and the
+/// record of every file name a compile located.
 ///
 /// This is `Compiler`'s own behavior rather than the readers' (those are
 /// tested under `Resource/`), so it sits beside the compiler it is about.
@@ -789,5 +790,196 @@ TEST_CASE("Compiler: a host resource") {
     for (const Request &request : requests)
       CHECK(std::filesystem::path(request.fileName) ==
             std::filesystem::canonical(tmpDir / "user/c.dat"));
+  }
+}
+
+TEST_CASE("getResourceReferences: the file names a compile located") {
+  TempDir tmpDir{"resource-references"};
+  const uint8_t gray[4] = {0, 64, 128, 255};
+  auto canonicalOf{[&](std::string_view name) {
+    return smdl::makePathCanonical((tmpDir / name).string());
+  }};
+  // Add `paths` and compile with unit tests emitted. Nothing is JIT
+  // compiled, since names are located while code is emitted.
+  auto compile{[](smdl::Compiler &compiler,
+                  const std::vector<std::filesystem::path> &paths) {
+    compiler.shouldEmitUnitTests = true;
+    for (const auto &path : paths)
+      if (std::optional<smdl::Error> error{compiler.add(path.string())})
+        return error->message;
+    if (std::optional<smdl::Error> error{
+            compiler.compile(smdl::OPT_LEVEL_NONE)})
+      return error->message;
+    return std::string();
+  }};
+  SUBCASE("A name is recorded once, with its module and what it resolved to") {
+    // The material body is emitted several times over, and the unit test
+    // names the file again.
+    REQUIRE(!smdl::write8bitImage((tmpDir / "a.png").string(), 2, 2, 1, gray));
+    tmpDir.write(
+        "main.mdl",
+        "#smdl\nimport ::df::*;\nimport ::tex::*;\n"
+        "export material M() = let {\n"
+        "  auto t = texture_2d(\"a.png\", tex::gamma_linear);\n"
+        "  auto c = ::tex::lookup_float3(t, float2(0.5));\n"
+        "} in material(surface: material_surface(\n"
+        "  scattering: df::diffuse_reflection_bsdf(tint: color(c))));\n"
+        "unit_test \"The reference\" {\n"
+        "  const auto t = texture_2d(\"a.png\");\n"
+        "}\n");
+    smdl::Compiler compiler{};
+    REQUIRE(compile(compiler, {tmpDir / "main.mdl"}) == "");
+    const smdl::Span<const smdl::ResourceReference> references{
+        compiler.getResourceReferences()};
+    REQUIRE(references.size() == 1);
+    CHECK(references[0].kind == smdl::RESOURCE_KIND_TEXTURE_2D);
+    CHECK(references[0].fileName == "a.png");
+    CHECK(references[0].resolvedFileNames ==
+          std::vector<std::string>{canonicalOf("a.png")});
+    REQUIRE(references[0].module != nullptr);
+    CHECK(references[0].module->getFileName() == canonicalOf("main.mdl"));
+  }
+  SUBCASE("A name that resolves to nothing is recorded with no files") {
+    tmpDir.write("main.mdl", "#smdl\nunit_test \"The reference\" {\n"
+                             "  const auto t = texture_2d(\"nowhere.png\");\n"
+                             "}\n");
+    const CollectedLog warnings{"nowhere.png"};
+    smdl::Compiler compiler{};
+    REQUIRE(compile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(compiler.getResourceReferences().size() == 1);
+    CHECK(compiler.getResourceReferences()[0].fileName == "nowhere.png");
+    CHECK(compiler.getResourceReferences()[0].resolvedFileNames.empty());
+    CHECK(warnings.warningCount() == 1);
+  }
+  SUBCASE("A file that is found and does not load is recorded all the same") {
+    tmpDir.write("bad.png", "This is not an image!\n");
+    tmpDir.write("main.mdl", "#smdl\nunit_test \"The reference\" {\n"
+                             "  const auto t = texture_2d(\"bad.png\");\n"
+                             "}\n");
+    const CollectedLog warnings{"bad.png"};
+    smdl::Compiler compiler{};
+    REQUIRE(compile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(compiler.getResourceReferences().size() == 1);
+    CHECK(compiler.getResourceReferences()[0].resolvedFileNames ==
+          std::vector<std::string>{canonicalOf("bad.png")});
+  }
+  SUBCASE("A tile marker records every tile, in tile order") {
+    REQUIRE(!smdl::write8bitImage((tmpDir / "tile_1002.png").string(), 2, 2, 1,
+                                  gray));
+    REQUIRE(!smdl::write8bitImage((tmpDir / "tile_1001.png").string(), 2, 2, 1,
+                                  gray));
+    tmpDir.write("main.mdl",
+                 "#smdl\nunit_test \"The reference\" {\n"
+                 "  const auto t = texture_2d(\"tile_<UDIM>.png\");\n"
+                 "}\n");
+    smdl::Compiler compiler{};
+    REQUIRE(compile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(compiler.getResourceReferences().size() == 1);
+    CHECK(compiler.getResourceReferences()[0].fileName == "tile_<UDIM>.png");
+    CHECK(compiler.getResourceReferences()[0].resolvedFileNames ==
+          std::vector<std::string>{canonicalOf("tile_1001.png"),
+                                   canonicalOf("tile_1002.png")});
+  }
+  SUBCASE("Each intrinsic records its own kind") {
+    tmpDir.write(
+        "main.mdl",
+        "#smdl\nunit_test \"The references\" {\n"
+        "  const auto a = texture_2d(\"missing.png\");\n"
+        "  const auto b = texture_3d(\"missing.vol\");\n"
+        "  const auto c = texture_ptex(\"missing.ptx\");\n"
+        "  const auto d = bsdf_measurement(\"missing.mbsdf\");\n"
+        "  const auto e = light_profile(\"missing.ies\");\n"
+        "  const auto f = spectral_curve(\"missing.txt\");\n"
+        "  const auto g = host_resource(\"test::kind\", \"missing.dat\");\n"
+        "}\n");
+    const CollectedLog warnings{"missing."};
+    smdl::Compiler compiler{};
+    compiler.hostResourceLoaders["test::kind"] =
+        [](const smdl::HostResourceRequest &,
+           smdl::HostResource &) -> std::optional<smdl::Error> {
+      return std::nullopt;
+    };
+    REQUIRE(compile(compiler, {tmpDir / "main.mdl"}) == "");
+    std::vector<smdl::ResourceKind> kinds{};
+    for (const smdl::ResourceReference &reference :
+         compiler.getResourceReferences())
+      kinds.push_back(reference.kind);
+    CHECK(kinds ==
+          std::vector<smdl::ResourceKind>{smdl::RESOURCE_KIND_TEXTURE_2D,
+                                          smdl::RESOURCE_KIND_TEXTURE_3D,
+                                          smdl::RESOURCE_KIND_TEXTURE_PTEX,
+                                          smdl::RESOURCE_KIND_BSDF_MEASUREMENT,
+                                          smdl::RESOURCE_KIND_LIGHT_PROFILE,
+                                          smdl::RESOURCE_KIND_SPECTRAL_CURVE,
+                                          smdl::RESOURCE_KIND_HOST_RESOURCE});
+  }
+  SUBCASE("A name that is never located is not recorded") {
+    REQUIRE(
+        !smdl::write8bitImage((tmpDir / "kept.png").string(), 2, 2, 1, gray));
+    tmpDir.write(
+        "main.mdl",
+        "#smdl\nimport ::df::*;\nimport ::tex::*;\n"
+        "export material M() = let {\n"
+        "  auto t = texture_2d(\"kept.png\", tex::gamma_linear);\n"
+        "  auto c = ::tex::lookup_float3(t, float2(0.5));\n"
+        "} in material(surface: material_surface(\n"
+        "  scattering: df::diffuse_reflection_bsdf(tint: color(c))));\n"
+        "export material N() = let {\n"
+        "  auto t = texture_2d(\"left_out.png\", tex::gamma_linear);\n"
+        "  auto c = ::tex::lookup_float3(t, float2(0.5));\n"
+        "} in material(surface: material_surface(\n"
+        "  scattering: df::diffuse_reflection_bsdf(tint: color(c))));\n"
+        "unit_test \"The references\" {\n"
+        "  const auto r = host_resource(\"test::none\", \"no_loader.dat\");\n"
+        "  const auto t = texture_2d(\"selector.png\", tex::gamma_linear, "
+        "\"Q\");\n"
+        "}\n");
+    const CollectedLog warnings{"Cannot "};
+    smdl::Compiler compiler{};
+    compiler.setDesiredMaterials({"M"});
+    REQUIRE(compile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(compiler.getResourceReferences().size() == 1);
+    CHECK(compiler.getResourceReferences()[0].fileName == "kept.png");
+    // The two the unit test names still warn, which is how a host hears
+    // of them.
+    CHECK(warnings.messages().size() == 2);
+  }
+  SUBCASE("The module is the one being compiled, not the wrapper's") {
+    tmpDir.write("user/c.txt", "nanometers\n400 0.1\n500 0.5\n600 0.9\n");
+    tmpDir.write("host/wrap.mdl",
+                 "#smdl\n"
+                 "@(macro)\n"
+                 "export spectral_curve curve_of(const string name) =\n"
+                 "  spectral_curve(name);\n");
+    tmpDir.write("user/main.mdl",
+                 "#smdl\nimport ::host::wrap::*;\n"
+                 "unit_test \"The wrapper\" {\n"
+                 "  const auto c = ::host::wrap::curve_of(\"c.txt\");\n"
+                 "}\n");
+    smdl::Compiler compiler{};
+    REQUIRE(compile(compiler, {tmpDir.path()}) == "");
+    REQUIRE(compiler.getResourceReferences().size() == 1);
+    const smdl::ResourceReference &reference{
+        compiler.getResourceReferences()[0]};
+    REQUIRE(reference.module != nullptr);
+    CHECK(reference.module->getQualifiedName() == "::user::main");
+    CHECK(reference.resolvedFileNames ==
+          std::vector<std::string>{canonicalOf("user/c.txt")});
+  }
+  SUBCASE("The record survives jitCompile and a recompile replaces it") {
+    REQUIRE(!smdl::write8bitImage((tmpDir / "a.png").string(), 2, 2, 1, gray));
+    tmpDir.write("main.mdl", "#smdl\nunit_test \"The reference\" {\n"
+                             "  const auto t = texture_2d(\"a.png\");\n"
+                             "}\n");
+    smdl::Compiler compiler{};
+    REQUIRE(compile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE_OK(compiler.jitCompile());
+    REQUIRE(compiler.getResourceReferences().size() == 1);
+    CHECK(compiler.getResourceReferences()[0].resolvedFileNames.size() == 1);
+    std::filesystem::remove(tmpDir / "a.png");
+    const CollectedLog warnings{"a.png"};
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    REQUIRE(compiler.getResourceReferences().size() == 1);
+    CHECK(compiler.getResourceReferences()[0].resolvedFileNames.empty());
   }
 }

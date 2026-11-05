@@ -90,6 +90,38 @@ enum DumpFormat : int {
   DUMP_FORMAT_OBJ  ///< Native object code.
 };
 
+/// The kind of resource a file name is located as. See
+/// `Compiler::getResourceReferences()`.
+enum ResourceKind : int {
+  RESOURCE_KIND_TEXTURE_2D,       ///< A `texture_2d`.
+  RESOURCE_KIND_TEXTURE_3D,       ///< A `texture_3d`.
+  RESOURCE_KIND_TEXTURE_PTEX,     ///< A `texture_ptex`.
+  RESOURCE_KIND_BSDF_MEASUREMENT, ///< A `bsdf_measurement`.
+  RESOURCE_KIND_LIGHT_PROFILE,    ///< A `light_profile`.
+  RESOURCE_KIND_SPECTRAL_CURVE,   ///< A `spectral_curve`.
+  RESOURCE_KIND_HOST_RESOURCE     ///< A `host_resource` of any kind.
+};
+
+/// A resource file name that `Compiler::compile()` located, or tried to.
+struct ResourceReference final {
+  /// The module the name was located against: the module being compiled,
+  /// whose directory and `#search_dir` declarations were searched. This
+  /// need not be the module the name is written in, since a function in
+  /// another module may pass the name through. Null for a builtin module.
+  const Module *module{};
+
+  /// The kind.
+  ResourceKind kind{};
+
+  /// The file name as the source gives it.
+  std::string fileName{};
+
+  /// The canonical paths the name resolved to: one file, one per tile for
+  /// a name with a tile marker such as `<UDIM>`, or none if nothing was
+  /// found.
+  std::vector<std::string> resolvedFileNames{};
+};
+
 /// The compiler.
 ///
 /// \note
@@ -498,6 +530,26 @@ public:
     return materialDefs_;
   }
 
+  /// Get the modules added by `add()`, `addCode()`, and `addFile()`, and
+  /// those `compile()` loaded from disk for a relative import, in the order
+  /// they were added or loaded, shadowed modules included. Builtin modules
+  /// are not among them. Every module lives as long as the compiler.
+  [[nodiscard]] std::vector<const Module *> getModules() const;
+
+  /// Get every resource file name the last `compile()` located, or tried
+  /// to, once per module, kind, and name, in the order first located. This
+  /// survives `jitCompile()` and is replaced by the next `compile()`.
+  ///
+  /// A file that is found and then fails to load is here, as is an image
+  /// the optimizer drops because nothing reads it. A name that is never
+  /// located is not: one named only by a material `setDesiredMaterials()`
+  /// leaves out, a `host_resource` whose kind has no loader, or a
+  /// `texture_2d` whose selector is not a channel.
+  [[nodiscard]] Span<const ResourceReference>
+  getResourceReferences() const noexcept {
+    return resourceReferences_;
+  }
+
   /// Run the JIT-compiled color-to-RGB function.
   ///
   /// \param[in] state
@@ -797,6 +849,10 @@ private:
 
   /// The JIT-compiled materials.
   std::vector<jit::MaterialDef> materialDefs_;
+
+  /// The resource file names the last `compile()` located. See
+  /// `getResourceReferences()`.
+  std::vector<ResourceReference> resourceReferences_;
 
   /// The JIT-compiled unit tests.
   std::vector<jit::UnitTest> unitTests_;

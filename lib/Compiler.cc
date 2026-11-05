@@ -1184,6 +1184,7 @@ void Compiler::resetForRecompile_() {
   colorToRGB_.func = nullptr;
   skippedMaterialNames_.clear();
   materialDefs_.clear();
+  resourceReferences_.clear();
   unitTests_.clear();
   execs_.clear();
   llvmContext_ = std::make_unique<llvm::LLVMContext>();
@@ -1789,6 +1790,13 @@ bool Compiler::matchesMaterialName(std::string_view materialName,
   return materialName.substr(0, 2) == "::"
              ? qualifiedName == materialName
              : isQualifiedNameSuffix(materialName, qualifiedName);
+}
+
+std::vector<const Module *> Compiler::getModules() const {
+  std::vector<const Module *> modules{};
+  modules.reserve(modules_.size());
+  for (const auto &module : modules_) modules.push_back(module.get());
+  return modules;
 }
 
 float3 Compiler::convertColorToRGB(const State &state,
