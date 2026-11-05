@@ -121,6 +121,13 @@ struct ResourceReference final {
   /// put in its place, resolved to: one file, one per tile for a name with
   /// a tile marker such as `<UDIM>`, or none if nothing was found.
   std::vector<std::string> resolvedFileNames{};
+
+  /// The files that loading a resolved file reads beside it, which are
+  /// named after it rather than located: the `.hdr` header of an ENVI
+  /// spectral library a `spectral_curve` selects a curve from. Each is
+  /// listed whether or not it exists, so that a host can tell one is
+  /// missing.
+  std::vector<std::string> sidecarFileNames{};
 };
 
 /// What a `ResourceRemapper` is asked to remap.
@@ -651,7 +658,9 @@ public:
   /// would have been: an absolute path is taken as is, a relative one is
   /// searched for, and a tile marker such as `<UDIM>` expands. This lets a
   /// host serve each module's resources from wherever it put them, such as
-  /// files it unpacked under names of its own.
+  /// files it unpacked under names of its own. A sidecar file (see
+  /// `ResourceReference::sidecarFileNames`) is read beside whatever the
+  /// returned name resolves to, so a host must put it there too.
   ///
   /// It runs on the thread calling `compile()`, while materials are
   /// emitted, and may be asked about one name more than once per compile,

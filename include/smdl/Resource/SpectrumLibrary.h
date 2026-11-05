@@ -45,6 +45,12 @@ public:
   [[nodiscard]]
   std::optional<Error> loadFromFile(const std::string &fileName) noexcept;
 
+  /// Get the name of the header file `loadFromFile()` reads for `fileName`.
+  [[nodiscard]] static std::string
+  getHeaderFileName(const std::string &fileName) {
+    return fileName + ".hdr";
+  }
+
   /// Get the number of curves.
   [[nodiscard]] size_t getNumCurves() const noexcept { return numCurves_; }
 

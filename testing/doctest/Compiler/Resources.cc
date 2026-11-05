@@ -43,6 +43,28 @@ std::string addAndCompile(smdl::Compiler &compiler,
   return {};
 }
 
+// Write the ENVI spectral library `name` with its header `name.hdr`
+// beside it: the curves 'grass' and 'sand' over two wavelengths, as
+// little-endian floats.
+void writeSpectrumLibrary(const TempDir &tmpDir, std::string_view name) {
+  const std::string_view header{"ENVI\n"
+                                "file type = ENVI Spectral Library\n"
+                                "samples = 2\nlines = 2\nbands = 1\n"
+                                "header offset = 0\ndata type = 4\n"
+                                "byte order = 0\n"
+                                "wavelength units = Nanometers\n"
+                                "wavelength = {400, 700}\n"
+                                "spectra names = {grass, sand}\n"};
+  tmpDir.write(smdl::concat(name, ".hdr"), header);
+  std::string data{};
+  for (float value : {0.1f, 0.2f, 0.3f, 0.4f}) {
+    uint32_t bits{};
+    std::memcpy(&bits, &value, sizeof(bits));
+    for (int k = 0; k < 4; k++) data += char((bits >> (8 * k)) & 0xFF);
+  }
+  tmpDir.write(name, data);
+}
+
 } // namespace
 
 TEST_CASE("Compiler: how often a missing resource is reported") {
@@ -225,22 +247,7 @@ TEST_CASE("Compiler: the channels of an image a selector selects") {
 
 TEST_CASE("Compiler: the curve a spectrum library does not have") {
   TempDir tmpDir{"spectrum-library-curve"};
-  // Two named curves over two wavelengths, as little-endian floats.
-  tmpDir.write("lib.sli.hdr", "ENVI\n"
-                              "file type = ENVI Spectral Library\n"
-                              "samples = 2\nlines = 2\nbands = 1\n"
-                              "header offset = 0\ndata type = 4\n"
-                              "byte order = 0\n"
-                              "wavelength units = Nanometers\n"
-                              "wavelength = {400, 700}\n"
-                              "spectra names = {grass, sand}\n");
-  std::string data{};
-  for (float value : {0.1f, 0.2f, 0.3f, 0.4f}) {
-    uint32_t bits{};
-    std::memcpy(&bits, &value, sizeof(bits));
-    for (int k = 0; k < 4; k++) data += char((bits >> (8 * k)) & 0xFF);
-  }
-  tmpDir.write("lib.sli", data);
+  writeSpectrumLibrary(tmpDir, "lib.sli");
   auto materialUsing{[](std::string_view name, std::string_view curve) {
     return smdl::concat("export material ", name,
                         "() = material(surface: material_surface(\n"
@@ -918,6 +925,50 @@ TEST_CASE("getResourceReferences: the file names a compile located") {
                                           smdl::RESOURCE_KIND_SPECTRAL_CURVE,
                                           smdl::RESOURCE_KIND_HOST_RESOURCE});
   }
+  SUBCASE("A curve from a spectral library lists the header as a sidecar") {
+    writeSpectrumLibrary(tmpDir, "lib.sli");
+    tmpDir.write("c.txt", "nanometers\n400 0.1\n500 0.5\n600 0.9\n");
+    tmpDir.write("main.mdl",
+                 "#smdl\nunit_test \"The curves\" {\n"
+                 "  const auto a = spectral_curve(\"lib.sli\", \"grass\");\n"
+                 "  const auto b = spectral_curve(\"lib.sli\", 1);\n"
+                 "  const auto c = spectral_curve(\"c.txt\");\n"
+                 "}\n");
+    smdl::Compiler compiler{};
+    REQUIRE(addAndCompile(compiler, {tmpDir / "main.mdl"}) == "");
+    const smdl::Span<const smdl::ResourceReference> references{
+        compiler.getResourceReferences()};
+    REQUIRE(references.size() == 2);
+    CHECK(references[0].fileName == "lib.sli");
+    CHECK(references[0].resolvedFileNames ==
+          std::vector<std::string>{canonicalOf("lib.sli")});
+    CHECK(references[0].sidecarFileNames ==
+          std::vector<std::string>{canonicalOf("lib.sli") + ".hdr"});
+    // A curve read from a text file is the one file.
+    CHECK(references[1].fileName == "c.txt");
+    CHECK(references[1].sidecarFileNames.empty());
+  }
+  SUBCASE("A header that is missing is listed, and a missing library is not") {
+    writeSpectrumLibrary(tmpDir, "lib.sli");
+    std::filesystem::remove(tmpDir / "lib.sli.hdr");
+    tmpDir.write("main.mdl",
+                 "#smdl\nunit_test \"The curves\" {\n"
+                 "  const auto a = spectral_curve(\"lib.sli\", \"grass\");\n"
+                 "  const auto b = spectral_curve(\"nowhere.sli\", 0);\n"
+                 "}\n");
+    const CollectedLog warnings{".sli"};
+    smdl::Compiler compiler{};
+    REQUIRE(addAndCompile(compiler, {tmpDir / "main.mdl"}) == "");
+    const smdl::Span<const smdl::ResourceReference> references{
+        compiler.getResourceReferences()};
+    REQUIRE(references.size() == 2);
+    CHECK(references[0].sidecarFileNames ==
+          std::vector<std::string>{canonicalOf("lib.sli") + ".hdr"});
+    CHECK(references[1].resolvedFileNames.empty());
+    CHECK(references[1].sidecarFileNames.empty());
+    CHECK(warnings.messages().size() == 2);
+    CHECK(warnings.count("lib.sli.hdr") == 1);
+  }
   SUBCASE("A name that is never located is not recorded") {
     REQUIRE(
         !smdl::write8bitImage((tmpDir / "kept.png").string(), 2, 2, 1, gray));
@@ -1105,6 +1156,29 @@ TEST_CASE("resourceRemapper: a name located somewhere else") {
     CHECK(compiler.getResourceReferences()[0].resolvedFileNames ==
           std::vector<std::string>{canonicalOf("cache/t_1001.png"),
                                    canonicalOf("cache/t_1002.png")});
+  }
+  SUBCASE("A library's header is read beside the returned name") {
+    writeSpectrumLibrary(tmpDir, "cache/x.sli");
+    tmpDir.write("main.mdl",
+                 "#smdl\nunit_test \"The curve\" {\n"
+                 "  const auto c = spectral_curve(\"lib.sli\", \"grass\");\n"
+                 "}\n");
+    smdl::Compiler compiler{};
+    compiler.resourceRemapper =
+        [&](const smdl::ResourceRemapRequest &) -> std::optional<std::string> {
+      return canonicalOf("cache/x.sli");
+    };
+    const CollectedLog warnings{".sli"};
+    REQUIRE(addAndCompile(compiler, {tmpDir / "main.mdl"}) == "");
+    CHECK(warnings.messages().empty());
+    REQUIRE(compiler.getResourceReferences().size() == 1);
+    const smdl::ResourceReference &reference{
+        compiler.getResourceReferences()[0]};
+    CHECK(reference.fileName == "lib.sli");
+    CHECK(reference.resolvedFileNames ==
+          std::vector<std::string>{canonicalOf("cache/x.sli")});
+    CHECK(reference.sidecarFileNames ==
+          std::vector<std::string>{canonicalOf("cache/x.sli") + ".hdr"});
   }
   SUBCASE("Modules naming one file are remapped apart") {
     REQUIRE(!smdl::write8bitImage((tmpDir / "cache/a.png").string(), 2, 2, 1,

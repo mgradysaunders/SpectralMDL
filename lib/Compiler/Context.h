@@ -511,11 +511,13 @@ public:
   }
 
   /// Record what `fileName` resolved to when located against the current
-  /// module, for `Compiler::getResourceReferences()`. Only the first of
-  /// several identical records is kept, since a material body is emitted
-  /// once for each function generated from it.
+  /// module, and the sidecar files loading it reads, for
+  /// `Compiler::getResourceReferences()`. Only the first of several
+  /// identical records is kept, since a material body is emitted once for
+  /// each function generated from it.
   void recordResourceReference(ResourceKind kind, const std::string &fileName,
-                               std::vector<std::string> resolvedFileNames);
+                               std::vector<std::string> resolvedFileNames,
+                               std::vector<std::string> sidecarFileNames);
 
 public:
   /// The compiler.

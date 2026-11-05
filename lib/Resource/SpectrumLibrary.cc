@@ -20,7 +20,7 @@ SpectrumLibrary::loadFromFile(const std::string &fileName) noexcept {
       throw Error(
           concat("Cannot load ", SpellFilePath(fileName), ": ", message));
     }};
-    std::string hdrFile{readOrThrow(fileName + ".hdr")};
+    std::string hdrFile{readOrThrow(getHeaderFileName(fileName))};
     llvm::StringRef hdr{hdrFile};
     // Where in the header a key was, for an error: nothing for a key the
     // header left out, whose value is the default.

@@ -3224,17 +3224,29 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
           logSearchedDirs(locatedName);
       }};
   auto recordReference{[&](const std::string &fileName,
-                           std::vector<std::string> resolvedFileNames) {
+                           std::vector<std::string> resolvedFileNames,
+                           std::vector<std::string> sidecarFileNames) {
     context.recordResourceReference(resourceKind(), fileName,
-                                    std::move(resolvedFileNames));
+                                    std::move(resolvedFileNames),
+                                    std::move(sidecarFileNames));
   }};
+  // If given, `sidecarFileNameOf` names the file that loading the resolved
+  // file reads beside it, which is recorded as its sidecar.
   auto withLocatedFile{[&](const std::string &fileName, Type *resultType,
-                           auto &&buildFromFile) -> Value {
+                           auto &&buildFromFile,
+                           std::string (*sidecarFileNameOf)(
+                               const std::string &) = nullptr) -> Value {
     const std::string locatedName{remapFileName(fileName)};
     std::optional<std::string> resolvedFileName{context.locate(locatedName)};
-    recordReference(fileName, resolvedFileName
-                                  ? std::vector<std::string>{*resolvedFileName}
-                                  : std::vector<std::string>{});
+    std::vector<std::string> resolvedFileNames{};
+    std::vector<std::string> sidecarFileNames{};
+    if (resolvedFileName) {
+      resolvedFileNames.push_back(*resolvedFileName);
+      if (sidecarFileNameOf)
+        sidecarFileNames.push_back(sidecarFileNameOf(*resolvedFileName));
+    }
+    recordReference(fileName, std::move(resolvedFileNames),
+                    std::move(sidecarFileNames));
     if (!resolvedFileName) {
       warnNotFound(fileName, locatedName);
       return invoke(resultType, {}, srcLoc);
@@ -3284,7 +3296,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
       std::vector<std::string> resolvedFileNames{};
       for (const auto &imagePath : resolvedImagePaths)
         resolvedFileNames.push_back(imagePath.path);
-      recordReference(fileName, std::move(resolvedFileNames));
+      recordReference(fileName, std::move(resolvedFileNames), {});
     }
     if (resolvedImagePaths.empty()) {
       warnNotFound(fileName, locatedName);
@@ -3603,6 +3615,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
       throwBadArguments("1 or 2 arguments");
     }
     std::string fileName{args[0].value.getComptimeString()};
+    // A curve selected by index or by name is read from an ENVI library,
+    // which comes with a header beside it.
     return withLocatedFile(
         fileName, spectralCurveType,
         [&](const std::string &resolvedFileName) -> Value {
@@ -3636,7 +3650,8 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
                         context.getComptimePtr(
                             floatPtrType, spectrumView.curveValues.data())}},
               srcLoc);
-        });
+        },
+        args.size() == 2 ? &SpectrumLibrary::getHeaderFileName : nullptr);
   }
   default:
     break;

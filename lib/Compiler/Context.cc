@@ -217,11 +217,13 @@ const AlbedoLUT *Context::getBuiltinAlbedo(llvm::StringRef name) {
 
 void Context::recordResourceReference(
     ResourceKind kind, const std::string &fileName,
-    std::vector<std::string> resolvedFileNames) {
+    std::vector<std::string> resolvedFileNames,
+    std::vector<std::string> sidecarFileNames) {
   if (!resourceReferenceKeys_[currentModule].emplace(kind, fileName).second)
     return;
   compiler.resourceReferences_.push_back(ResourceReference{
-      getResourceModule(), kind, fileName, std::move(resolvedFileNames)});
+      getResourceModule(), kind, fileName, std::move(resolvedFileNames),
+      std::move(sidecarFileNames)});
 }
 
 Type *Context::getArithmeticType(Scalar scalar, Extent extent) {
