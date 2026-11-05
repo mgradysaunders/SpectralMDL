@@ -27,6 +27,24 @@
 #include "smdl/Resource/HostResource.h"
 #include "smdl/Resource/Image.h"
 
+namespace {
+
+// Add `paths` and compile with unit tests emitted, returning the first
+// error message or the empty string. Nothing is JIT compiled, since a
+// resource name is remapped and located while code is emitted.
+std::string addAndCompile(smdl::Compiler &compiler,
+                          const std::vector<std::filesystem::path> &paths) {
+  compiler.shouldEmitUnitTests = true;
+  for (const auto &path : paths)
+    if (std::optional<smdl::Error> error{compiler.add(path.string())})
+      return error->message;
+  if (std::optional<smdl::Error> error{compiler.compile(smdl::OPT_LEVEL_NONE)})
+    return error->message;
+  return {};
+}
+
+} // namespace
+
 TEST_CASE("Compiler: how often a missing resource is reported") {
   TempDir tmpDir{"missing-resource"};
   // A missing texture is a warning, not an error, and the texture reads
@@ -799,19 +817,6 @@ TEST_CASE("getResourceReferences: the file names a compile located") {
   auto canonicalOf{[&](std::string_view name) {
     return smdl::makePathCanonical((tmpDir / name).string());
   }};
-  // Add `paths` and compile with unit tests emitted. Nothing is JIT
-  // compiled, since names are located while code is emitted.
-  auto compile{[](smdl::Compiler &compiler,
-                  const std::vector<std::filesystem::path> &paths) {
-    compiler.shouldEmitUnitTests = true;
-    for (const auto &path : paths)
-      if (std::optional<smdl::Error> error{compiler.add(path.string())})
-        return error->message;
-    if (std::optional<smdl::Error> error{
-            compiler.compile(smdl::OPT_LEVEL_NONE)})
-      return error->message;
-    return std::string();
-  }};
   SUBCASE("A name is recorded once, with its module and what it resolved to") {
     // The material body is emitted several times over, and the unit test
     // names the file again.
@@ -828,7 +833,7 @@ TEST_CASE("getResourceReferences: the file names a compile located") {
         "  const auto t = texture_2d(\"a.png\");\n"
         "}\n");
     smdl::Compiler compiler{};
-    REQUIRE(compile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(addAndCompile(compiler, {tmpDir / "main.mdl"}) == "");
     const smdl::Span<const smdl::ResourceReference> references{
         compiler.getResourceReferences()};
     REQUIRE(references.size() == 1);
@@ -845,7 +850,7 @@ TEST_CASE("getResourceReferences: the file names a compile located") {
                              "}\n");
     const CollectedLog warnings{"nowhere.png"};
     smdl::Compiler compiler{};
-    REQUIRE(compile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(addAndCompile(compiler, {tmpDir / "main.mdl"}) == "");
     REQUIRE(compiler.getResourceReferences().size() == 1);
     CHECK(compiler.getResourceReferences()[0].fileName == "nowhere.png");
     CHECK(compiler.getResourceReferences()[0].resolvedFileNames.empty());
@@ -858,7 +863,7 @@ TEST_CASE("getResourceReferences: the file names a compile located") {
                              "}\n");
     const CollectedLog warnings{"bad.png"};
     smdl::Compiler compiler{};
-    REQUIRE(compile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(addAndCompile(compiler, {tmpDir / "main.mdl"}) == "");
     REQUIRE(compiler.getResourceReferences().size() == 1);
     CHECK(compiler.getResourceReferences()[0].resolvedFileNames ==
           std::vector<std::string>{canonicalOf("bad.png")});
@@ -873,7 +878,7 @@ TEST_CASE("getResourceReferences: the file names a compile located") {
                  "  const auto t = texture_2d(\"tile_<UDIM>.png\");\n"
                  "}\n");
     smdl::Compiler compiler{};
-    REQUIRE(compile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(addAndCompile(compiler, {tmpDir / "main.mdl"}) == "");
     REQUIRE(compiler.getResourceReferences().size() == 1);
     CHECK(compiler.getResourceReferences()[0].fileName == "tile_<UDIM>.png");
     CHECK(compiler.getResourceReferences()[0].resolvedFileNames ==
@@ -899,7 +904,7 @@ TEST_CASE("getResourceReferences: the file names a compile located") {
            smdl::HostResource &) -> std::optional<smdl::Error> {
       return std::nullopt;
     };
-    REQUIRE(compile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(addAndCompile(compiler, {tmpDir / "main.mdl"}) == "");
     std::vector<smdl::ResourceKind> kinds{};
     for (const smdl::ResourceReference &reference :
          compiler.getResourceReferences())
@@ -937,7 +942,7 @@ TEST_CASE("getResourceReferences: the file names a compile located") {
     const CollectedLog warnings{"Cannot "};
     smdl::Compiler compiler{};
     compiler.setDesiredMaterials({"M"});
-    REQUIRE(compile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(addAndCompile(compiler, {tmpDir / "main.mdl"}) == "");
     REQUIRE(compiler.getResourceReferences().size() == 1);
     CHECK(compiler.getResourceReferences()[0].fileName == "kept.png");
     // The two the unit test names still warn, which is how a host hears
@@ -957,7 +962,7 @@ TEST_CASE("getResourceReferences: the file names a compile located") {
                  "  const auto c = ::host::wrap::curve_of(\"c.txt\");\n"
                  "}\n");
     smdl::Compiler compiler{};
-    REQUIRE(compile(compiler, {tmpDir.path()}) == "");
+    REQUIRE(addAndCompile(compiler, {tmpDir.path()}) == "");
     REQUIRE(compiler.getResourceReferences().size() == 1);
     const smdl::ResourceReference &reference{
         compiler.getResourceReferences()[0]};
@@ -972,7 +977,7 @@ TEST_CASE("getResourceReferences: the file names a compile located") {
                              "  const auto t = texture_2d(\"a.png\");\n"
                              "}\n");
     smdl::Compiler compiler{};
-    REQUIRE(compile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(addAndCompile(compiler, {tmpDir / "main.mdl"}) == "");
     REQUIRE_OK(compiler.jitCompile());
     REQUIRE(compiler.getResourceReferences().size() == 1);
     CHECK(compiler.getResourceReferences()[0].resolvedFileNames.size() == 1);
@@ -981,5 +986,197 @@ TEST_CASE("getResourceReferences: the file names a compile located") {
     REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
     REQUIRE(compiler.getResourceReferences().size() == 1);
     CHECK(compiler.getResourceReferences()[0].resolvedFileNames.empty());
+  }
+}
+
+TEST_CASE("resourceRemapper: a name located somewhere else") {
+  TempDir tmpDir{"resource-remapper"};
+  const uint8_t gray[4] = {0, 64, 128, 255};
+  std::filesystem::create_directories(tmpDir / "cache");
+  auto canonicalOf{[&](std::string_view name) {
+    return smdl::makePathCanonical((tmpDir / name).string());
+  }};
+  // Names 'albedo.png' on line 4, which is never beside the module.
+  const std::string mainSource{"#smdl\nimport ::tex::*;\n"
+                               "unit_test \"The texture\" {\n"
+                               "  const auto t = texture_2d(\"albedo.png\");\n"
+                               "  #assert(tex::texture_isvalid(t));\n"
+                               "}\n"};
+  // Names 'albedo.png' and asserts nothing, so it compiles whether or not
+  // the file is found. As source code with no anchor, it finds nothing
+  // beside itself.
+  const std::string codeSource{"#smdl\nunit_test \"The texture\" {\n"
+                               "  const auto t = texture_2d(\"albedo.png\");\n"
+                               "}\n"};
+  SUBCASE("The returned name is located instead, and recorded as written") {
+    REQUIRE(!smdl::write8bitImage((tmpDir / "cache/0123.png").string(), 2, 2, 1,
+                                  gray));
+    tmpDir.write("main.mdl", mainSource);
+    smdl::Compiler compiler{};
+    compiler.resourceRemapper = [&](const smdl::ResourceRemapRequest &request)
+        -> std::optional<std::string> {
+      if (request.fileName != "albedo.png") return std::nullopt;
+      return canonicalOf("cache/0123.png");
+    };
+    REQUIRE(addAndCompile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE_OK(compiler.jitCompile());
+    StateStorage storage{compiler};
+    smdl::State state{storage.makeState()};
+    CHECK_OK(compiler.runUnitTests(state));
+    REQUIRE(compiler.getResourceReferences().size() == 1);
+    CHECK(compiler.getResourceReferences()[0].fileName == "albedo.png");
+    CHECK(compiler.getResourceReferences()[0].resolvedFileNames ==
+          std::vector<std::string>{canonicalOf("cache/0123.png")});
+  }
+  SUBCASE("The remapper is told the module, the kind, and the name") {
+    tmpDir.write("curve.txt", "nanometers\n400 0.1\n500 0.5\n600 0.9\n");
+    tmpDir.write("main.mdl", "#smdl\nunit_test \"The reference\" {\n"
+                             "  const auto c = spectral_curve(\"curve.txt\");\n"
+                             "}\n");
+    struct Request final {
+      std::string module{};
+      smdl::ResourceKind kind{};
+      std::string fileName{};
+    };
+    std::vector<Request> requests{};
+    smdl::Compiler compiler{};
+    compiler.resourceRemapper = [&](const smdl::ResourceRemapRequest &request)
+        -> std::optional<std::string> {
+      requests.push_back({request.module
+                              ? std::string(request.module->getQualifiedName())
+                              : std::string(),
+                          request.kind, std::string(request.fileName)});
+      return std::nullopt;
+    };
+    REQUIRE(addAndCompile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(!requests.empty());
+    for (const Request &request : requests) {
+      CHECK(request.module == "::main");
+      CHECK(request.kind == smdl::RESOURCE_KIND_SPECTRAL_CURVE);
+      CHECK(request.fileName == "curve.txt");
+    }
+  }
+  SUBCASE("Returning nothing locates the name as written") {
+    REQUIRE(
+        !smdl::write8bitImage((tmpDir / "albedo.png").string(), 2, 2, 1, gray));
+    tmpDir.write("main.mdl", mainSource);
+    smdl::Compiler compiler{};
+    compiler.resourceRemapper =
+        [](const smdl::ResourceRemapRequest &) -> std::optional<std::string> {
+      return std::nullopt;
+    };
+    REQUIRE(addAndCompile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(compiler.getResourceReferences().size() == 1);
+    CHECK(compiler.getResourceReferences()[0].resolvedFileNames ==
+          std::vector<std::string>{canonicalOf("albedo.png")});
+  }
+  SUBCASE("A relative returned name is searched for as usual") {
+    std::filesystem::create_directories(tmpDir / "textures");
+    REQUIRE(!smdl::write8bitImage((tmpDir / "textures/b.png").string(), 2, 2, 1,
+                                  gray));
+    tmpDir.write("main.mdl", mainSource);
+    smdl::Compiler compiler{};
+    compiler.resourceRemapper =
+        [](const smdl::ResourceRemapRequest &) -> std::optional<std::string> {
+      return "textures/b.png";
+    };
+    REQUIRE(addAndCompile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(compiler.getResourceReferences().size() == 1);
+    CHECK(compiler.getResourceReferences()[0].resolvedFileNames ==
+          std::vector<std::string>{canonicalOf("textures/b.png")});
+  }
+  SUBCASE("A tile marker in the returned name expands") {
+    REQUIRE(!smdl::write8bitImage((tmpDir / "cache/t_1001.png").string(), 2, 2,
+                                  1, gray));
+    REQUIRE(!smdl::write8bitImage((tmpDir / "cache/t_1002.png").string(), 2, 2,
+                                  1, gray));
+    tmpDir.write("main.mdl",
+                 "#smdl\nunit_test \"The reference\" {\n"
+                 "  const auto t = texture_2d(\"albedo_<UDIM>.png\");\n"
+                 "}\n");
+    smdl::Compiler compiler{};
+    compiler.resourceRemapper =
+        [&](const smdl::ResourceRemapRequest &) -> std::optional<std::string> {
+      return (std::filesystem::path(canonicalOf("cache")) / "t_<UDIM>.png")
+          .string();
+    };
+    REQUIRE(addAndCompile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(compiler.getResourceReferences().size() == 1);
+    CHECK(compiler.getResourceReferences()[0].resolvedFileNames ==
+          std::vector<std::string>{canonicalOf("cache/t_1001.png"),
+                                   canonicalOf("cache/t_1002.png")});
+  }
+  SUBCASE("Modules naming one file are remapped apart") {
+    REQUIRE(!smdl::write8bitImage((tmpDir / "cache/a.png").string(), 2, 2, 1,
+                                  gray));
+    REQUIRE(!smdl::write8bitImage((tmpDir / "cache/b.png").string(), 2, 2, 1,
+                                  gray));
+    smdl::Compiler compiler{};
+    compiler.shouldEmitUnitTests = true;
+    compiler.resourceRemapper = [&](const smdl::ResourceRemapRequest &request)
+        -> std::optional<std::string> {
+      return canonicalOf(request.module->getQualifiedName() == "::a"
+                             ? "cache/a.png"
+                             : "cache/b.png");
+    };
+    REQUIRE_OK(compiler.addCode("::a", codeSource));
+    REQUIRE_OK(compiler.addCode("::b", codeSource));
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    const smdl::Span<const smdl::ResourceReference> references{
+        compiler.getResourceReferences()};
+    REQUIRE(references.size() == 2);
+    for (const smdl::ResourceReference &reference : references) {
+      REQUIRE(reference.module != nullptr);
+      CHECK(reference.resolvedFileNames ==
+            std::vector<std::string>{
+                canonicalOf(reference.module->getQualifiedName() == "::a"
+                                ? "cache/a.png"
+                                : "cache/b.png")});
+    }
+    CHECK(references[0].module != references[1].module);
+  }
+  SUBCASE("A returned name that is not found warns with both names") {
+    tmpDir.write("main.mdl", codeSource);
+    smdl::Compiler compiler{};
+    compiler.resourceRemapper =
+        [&](const smdl::ResourceRemapRequest &) -> std::optional<std::string> {
+      return (tmpDir / "gone.png").string();
+    };
+    const CollectedLog warnings{"albedo.png"};
+    REQUIRE(addAndCompile(compiler, {tmpDir / "main.mdl"}) == "");
+    REQUIRE(warnings.messages().size() == 1);
+    CHECK_CONTAINS(warnings.messages()[0],
+                   "Cannot load \"albedo.png\" (remapped to \"");
+    CHECK_CONTAINS(warnings.messages()[0], "gone.png\"): file not found");
+  }
+  SUBCASE("Each missing file one name is remapped to warns") {
+    smdl::Compiler compiler{};
+    compiler.shouldEmitUnitTests = true;
+    compiler.resourceRemapper = [&](const smdl::ResourceRemapRequest &request)
+        -> std::optional<std::string> {
+      return (tmpDir / (request.module->getQualifiedName() == "::a"
+                            ? "gone_a.png"
+                            : "gone_b.png"))
+          .string();
+    };
+    REQUIRE_OK(compiler.addCode("::a", codeSource));
+    REQUIRE_OK(compiler.addCode("::b", codeSource));
+    const CollectedLog warnings{"albedo.png"};
+    REQUIRE_OK(compiler.compile(smdl::OPT_LEVEL_NONE));
+    CHECK(warnings.messages().size() == 2);
+    CHECK(warnings.count("gone_a.png") == 1);
+    CHECK(warnings.count("gone_b.png") == 1);
+  }
+  SUBCASE("An exception escaping the remapper fails the compile at the line") {
+    tmpDir.write("main.mdl", mainSource);
+    smdl::Compiler compiler{};
+    compiler.resourceRemapper =
+        [](const smdl::ResourceRemapRequest &) -> std::optional<std::string> {
+      throw std::runtime_error("Out of cheese");
+    };
+    const std::string message{addAndCompile(compiler, {tmpDir / "main.mdl"})};
+    CHECK_CONTAINS(message, "Cannot remap \"albedo.png\": ");
+    CHECK_CONTAINS(message, "Out of cheese");
+    CHECK_CONTAINS(message, canonicalOf("main.mdl") + ":4:");
   }
 }

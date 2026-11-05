@@ -220,11 +220,8 @@ void Context::recordResourceReference(
     std::vector<std::string> resolvedFileNames) {
   if (!resourceReferenceKeys_[currentModule].emplace(kind, fileName).second)
     return;
-  // A builtin module dies with this context, so it must not be pointed to
-  // from a record that outlives the compile.
-  compiler.resourceReferences_.push_back(
-      ResourceReference{currentModule->isBuiltin() ? nullptr : currentModule,
-                        kind, fileName, std::move(resolvedFileNames)});
+  compiler.resourceReferences_.push_back(ResourceReference{
+      getResourceModule(), kind, fileName, std::move(resolvedFileNames)});
 }
 
 Type *Context::getArithmeticType(Scalar scalar, Extent extent) {

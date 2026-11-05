@@ -3172,44 +3172,71 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
       message += concat("\n  and ", searchDirs.size() - MAX_LISTED, " more");
     resourceSourceLocation(srcLoc).logDebug(message);
   }};
+  auto resourceKind{[&] {
+    switch (intrinsicID) {
+    case IntrinsicID::LoadTexture2D:
+      return RESOURCE_KIND_TEXTURE_2D;
+    case IntrinsicID::LoadTexture3D:
+      return RESOURCE_KIND_TEXTURE_3D;
+    case IntrinsicID::LoadTexturePtex:
+      return RESOURCE_KIND_TEXTURE_PTEX;
+    case IntrinsicID::LoadBSDFMeasurement:
+      return RESOURCE_KIND_BSDF_MEASUREMENT;
+    case IntrinsicID::LoadLightProfile:
+      return RESOURCE_KIND_LIGHT_PROFILE;
+    case IntrinsicID::LoadSpectralCurve:
+      return RESOURCE_KIND_SPECTRAL_CURVE;
+    case IntrinsicID::LoadHostResource:
+      return RESOURCE_KIND_HOST_RESOURCE;
+    default:
+      SMDL_SANITY_CHECK_MSG(false, "an intrinsic that locates no file");
+      return ResourceKind{};
+    }
+  }};
+  // The name to locate in place of `fileName`, which is what the host's
+  // remapper returns for it if anything. Whatever escapes the remapper is
+  // reported at the line naming the file.
+  auto remapFileName{[&](const std::string &fileName) -> std::string {
+    const ResourceRemapper &remapper{context.compiler.resourceRemapper};
+    if (!remapper) return fileName;
+    std::optional<std::string> remapped{};
+    if (std::optional<Error> error{catchAndReturnError([&] {
+          remapped = remapper(ResourceRemapRequest{context.getResourceModule(),
+                                                   resourceKind(), fileName});
+        })})
+      resourceSourceLocation(srcLoc).throwError(
+          "Cannot remap ", SpellQuoted(fileName), ": ", error->message);
+    return remapped ? std::move(*remapped) : fileName;
+  }};
+  // Warn that `fileName`, located as `locatedName`, is not found, once per
+  // located name, so that two modules remapping one name elsewhere are
+  // each heard from.
+  auto warnNotFound{
+      [&](const std::string &fileName, const std::string &locatedName) {
+        const std::string remapNote{
+            locatedName == fileName
+                ? std::string()
+                : concat(" (remapped to ", SpellQuoted(locatedName), ")")};
+        if (context.compiler.logResourceWarningOnce_(
+                resourceSourceLocation(srcLoc), locatedName,
+                concat("Cannot load ", SpellQuoted(fileName), remapNote,
+                       ": file not found")))
+          logSearchedDirs(locatedName);
+      }};
   auto recordReference{[&](const std::string &fileName,
                            std::vector<std::string> resolvedFileNames) {
-    const ResourceKind kind{[&] {
-      switch (intrinsicID) {
-      case IntrinsicID::LoadTexture2D:
-        return RESOURCE_KIND_TEXTURE_2D;
-      case IntrinsicID::LoadTexture3D:
-        return RESOURCE_KIND_TEXTURE_3D;
-      case IntrinsicID::LoadTexturePtex:
-        return RESOURCE_KIND_TEXTURE_PTEX;
-      case IntrinsicID::LoadBSDFMeasurement:
-        return RESOURCE_KIND_BSDF_MEASUREMENT;
-      case IntrinsicID::LoadLightProfile:
-        return RESOURCE_KIND_LIGHT_PROFILE;
-      case IntrinsicID::LoadSpectralCurve:
-        return RESOURCE_KIND_SPECTRAL_CURVE;
-      case IntrinsicID::LoadHostResource:
-        return RESOURCE_KIND_HOST_RESOURCE;
-      default:
-        SMDL_SANITY_CHECK_MSG(false, "an intrinsic that locates no file");
-        return ResourceKind{};
-      }
-    }()};
-    context.recordResourceReference(kind, fileName,
+    context.recordResourceReference(resourceKind(), fileName,
                                     std::move(resolvedFileNames));
   }};
   auto withLocatedFile{[&](const std::string &fileName, Type *resultType,
                            auto &&buildFromFile) -> Value {
-    std::optional<std::string> resolvedFileName{context.locate(fileName)};
+    const std::string locatedName{remapFileName(fileName)};
+    std::optional<std::string> resolvedFileName{context.locate(locatedName)};
     recordReference(fileName, resolvedFileName
                                   ? std::vector<std::string>{*resolvedFileName}
                                   : std::vector<std::string>{});
     if (!resolvedFileName) {
-      if (context.compiler.logResourceWarningOnce_(
-              resourceSourceLocation(srcLoc), fileName,
-              concat("Cannot load ", SpellQuoted(fileName),
-                     ": file not found")))
-        logSearchedDirs(fileName);
+      warnNotFound(fileName, locatedName);
       return invoke(resultType, {}, srcLoc);
     }
     return buildFromFile(*resolvedFileName);
@@ -3250,8 +3277,9 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
     const bool useMipLevels{useMipmap || maxMipmap};
     const Image::MipFilter mipFilter{maxMipmap ? Image::MIP_MAX
                                                : Image::MIP_MEAN};
+    const std::string locatedName{remapFileName(fileName)};
     std::vector<FileLocator::ImagePath> resolvedImagePaths{
-        context.locateImages(fileName)};
+        context.locateImages(locatedName)};
     {
       std::vector<std::string> resolvedFileNames{};
       for (const auto &imagePath : resolvedImagePaths)
@@ -3259,11 +3287,7 @@ Value Emitter::emitIntrinsicLoad(IntrinsicID intrinsicID,
       recordReference(fileName, std::move(resolvedFileNames));
     }
     if (resolvedImagePaths.empty()) {
-      if (context.compiler.logResourceWarningOnce_(
-              resourceSourceLocation(srcLoc), fileName,
-              concat("Cannot load ", SpellQuoted(fileName),
-                     ": file not found")))
-        logSearchedDirs(fileName);
+      warnNotFound(fileName, locatedName);
       return invoke(texture2DType, {}, srcLoc);
     }
     unsigned tileCountU{uint32_t(1)};

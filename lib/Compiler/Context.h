@@ -504,6 +504,12 @@ public:
         currentModule->getResourceAnchor(), currentModule->getSearchDirs());
   }
 
+  /// The current module as a resource lookup names it to the host, which
+  /// is null for a builtin module, since that dies with this context.
+  [[nodiscard]] const Module *getResourceModule() const noexcept {
+    return currentModule->isBuiltin() ? nullptr : currentModule;
+  }
+
   /// Record what `fileName` resolved to when located against the current
   /// module, for `Compiler::getResourceReferences()`. Only the first of
   /// several identical records is kept, since a material body is emitted

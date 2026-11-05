@@ -1,6 +1,7 @@
 /// \file
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <tuple>
 #include <unordered_map>
@@ -116,11 +117,29 @@ struct ResourceReference final {
   /// The file name as the source gives it.
   std::string fileName{};
 
-  /// The canonical paths the name resolved to: one file, one per tile for
-  /// a name with a tile marker such as `<UDIM>`, or none if nothing was
-  /// found.
+  /// The canonical paths the name, or the name `Compiler::resourceRemapper`
+  /// put in its place, resolved to: one file, one per tile for a name with
+  /// a tile marker such as `<UDIM>`, or none if nothing was found.
   std::vector<std::string> resolvedFileNames{};
 };
+
+/// What a `ResourceRemapper` is asked to remap.
+struct ResourceRemapRequest final {
+  /// The module the name is located against, as in `ResourceReference`.
+  const Module *module{};
+
+  /// The kind.
+  ResourceKind kind{};
+
+  /// The file name as the source gives it.
+  std::string_view fileName{};
+};
+
+/// A host function that redirects resource file names, returning the name
+/// to locate in place of the request's, or nothing to locate it as is. See
+/// `Compiler::resourceRemapper`.
+using ResourceRemapper = std::function<std::optional<std::string>(
+    const ResourceRemapRequest &request)>;
 
 /// The compiler.
 ///
@@ -624,6 +643,22 @@ public:
   /// are. A kind with no loader is a warning, once per kind per
   /// `compile()`, and reads as null. See `HostResourceLoader`.
   std::unordered_map<std::string, HostResourceLoader> hostResourceLoaders{};
+
+  /// The resource remapper, if any.
+  ///
+  /// Each resource file name is offered to it before it is located, and
+  /// the name it returns is located in its place exactly as the original
+  /// would have been: an absolute path is taken as is, a relative one is
+  /// searched for, and a tile marker such as `<UDIM>` expands. This lets a
+  /// host serve each module's resources from wherever it put them, such as
+  /// files it unpacked under names of its own.
+  ///
+  /// It runs on the thread calling `compile()`, while materials are
+  /// emitted, and may be asked about one name more than once per compile,
+  /// so it must be cheap and give the same answer each time. An exception
+  /// escaping it fails the compile with an error at the line naming the
+  /// file.
+  ResourceRemapper resourceRemapper{};
 
   /// Enable the `scatterNormalEval`, `scatterNormalDraw`, and
   /// `geometryNormalEval` entry points?
