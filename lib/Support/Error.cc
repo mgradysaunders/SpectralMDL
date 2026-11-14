@@ -1,6 +1,7 @@
 #include "smdl/Support/Error.h"
 
 #include "smdl/Support/Logger.h"
+#include <cstdlib>
 
 #if __GNUC__ || __clang__
 #if __has_include(<cxxabi.h>)

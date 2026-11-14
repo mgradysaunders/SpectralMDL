@@ -518,7 +518,7 @@ void Emitter::rejectSameScopeShadow(Span<const std::string_view> name,
 Declaration *Emitter::probeName(Span<const std::string_view> name,
                                 llvm::Function *llvmFunc,
                                 Declaration **unusableMatch) {
-  size_t seqLimit{std::numeric_limits<uint64_t>::max()};
+  uint64_t seqLimit{std::numeric_limits<uint64_t>::max()};
   for (auto s{scope}; s; s = s->parent) {
     for (const auto &[anchorScope, anchorSeq] : anchors)
       if (s == anchorScope) seqLimit = std::min(seqLimit, anchorSeq);
@@ -1949,7 +1949,7 @@ SMDL_EXPORT void smdlTabulateAlbedo(const char *name, int numCosTheta,
   // The JIT'd function may throw (e.g. '#panic'), and an exception must
   // not unwind out of 'parallelFor'. Capture the first one and rethrow
   // it on the calling thread.
-  std::__exception_ptr::exception_ptr firstException{std::exception_ptr{}};
+  std::exception_ptr firstException{};
   std::mutex firstExceptionMutex{};
   parallelFor(0, numCosTheta, [&](size_t i) {
     try {

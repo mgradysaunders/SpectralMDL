@@ -592,7 +592,7 @@ Compiler::add(std::string fileOrDirName,
             std::vector<std::string> prefixJ{
                 parseArchivePackagePrefix(archivePaths[j])};
             if (size_t n{std::min(prefixI.size(), prefixJ.size())};
-                std::equal(prefixI.begin(), prefixI.begin() + long(n),
+                std::equal(prefixI.begin(), prefixI.begin() + ptrdiff_t(n),
                            prefixJ.begin())) {
               throw Error(concat(
                   "Archives ", //
@@ -1302,10 +1302,8 @@ std::optional<Error> Compiler::compile(OptLevel optLevel) noexcept {
                        imageEntries.end());
     if (!imageEntries.empty()) {
       SMDL_PROFILER_ENTRY("Load images in parallel");
-      const std::chrono::time_point<
-          std::chrono::steady_clock,
-          std::chrono::duration<long, std::ratio<1, 1000000000>>>
-          startTime{std::chrono::steady_clock::now()};
+      const std::chrono::steady_clock::time_point startTime{
+          std::chrono::steady_clock::now()};
       // A decode failure must not unwind out of 'parallelFor'; the image
       // keeps its pre-allocated (zeroed) texels, matching the 'loadImage_'
       // policy. The workers only record what happened, and the log is
